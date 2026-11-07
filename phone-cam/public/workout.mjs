@@ -1,7 +1,9 @@
 
 import {
-  SquatAnalyzer, summarize, trends, analyzeFrames, toCSV
-} from './analysis.mjs';
+  ExerciseAnalyzer as SquatAnalyzer, summarizeExercise as summarize,
+  exerciseTrends as trends, analyzeExerciseFrames as analyzeFrames,
+  exerciseCSV as toCSV
+} from './exercises.mjs';
 
 const $ = id => document.getElementById(id);
 const key = 'aggie-workout-sessions-v1';
@@ -25,7 +27,7 @@ function persist() {
 function newSession() {
   return {
     session_id: crypto.randomUUID(),
-    exercise: 'squat',
+    exercise: $('workout-exercise').value,
     collected_at: new Date().toISOString(),
     source: 'live-tracking',
     metadata: {
@@ -41,7 +43,7 @@ function render() {
   const s = summarize(current?.reps || []);
   $('workout-summary').textContent =
     `${s.rep_count} reps · score ${s.mean_score ?? '—'}/100`
-    + ` · mean depth ${s.mean_depth ?? '—'}°`
+    + ` · mean minimum joint angle ${s.mean_joint_angle_min ?? '—'}°`
     + ` · mean time ${s.mean_rep_seconds ?? '—'}s`
     + ` · tempo SD ${s.tempo_std_seconds ?? '—'}s`
     + ` · first-to-last score drop ${s.score_drop_first_to_last ?? '—'}`;
@@ -49,7 +51,7 @@ function render() {
   $('workout-reps').replaceChildren(...(current?.reps || []).map(r => {
     const row = document.createElement('div');
     row.textContent = `#${r.rep_number}: ${r.form_score}/100`
-      + ` · ${r.knee_angle_min}° · ${r.rep_time_sec}s`
+      + ` · ${(r.joint_angle_min ?? r.knee_angle_min)}° · ${r.rep_time_sec}s`
       + ` · ${r.mistakes.join(', ') || 'targets met'}`;
     return row;
   }));
@@ -69,13 +71,14 @@ $('workout-start').onclick = () => {
     return;
   }
   active = newSession();
-  analyzer = new SquatAnalyzer();
+  analyzer = new SquatAnalyzer(active.exercise);
   frames = [];
   $('workout-start').disabled = true;
   $('workout-stop').disabled = false;
   $('workout-import').disabled = true;
+  $('workout-exercise').disabled = true;
   $('workout-status').textContent =
-    'Recording keypoints only. Stand upright to begin.';
+    'Recording keypoints only. Start with the tracked joint comfortably extended (at least 160 degrees).';
   render();
 };
 
@@ -87,6 +90,7 @@ function stop() {
   $('workout-start').disabled = false;
   $('workout-stop').disabled = true;
   $('workout-import').disabled = false;
+  $('workout-exercise').disabled = false;
   render();
   $('workout-status').textContent =
     'Session finished. Incomplete reps excluded. Export files to keep/share results.';
@@ -146,10 +150,10 @@ $('workout-import').onchange = async event => {
       throw new Error('Frame file must be smaller than 20 MB');
     }
     const imported = JSON.parse(await file.text());
-    const reps = analyzeFrames(imported);
+    const reps = analyzeFrames(imported, $('workout-exercise').value);
     if (!reps.length) {
       throw new Error(
-        'No complete squats found. Import tracking frames, not session summaries.'
+        'No complete reps found for the selected exercise. Import tracking frames, not session summaries.'
       );
     }
     const session = newSession();
