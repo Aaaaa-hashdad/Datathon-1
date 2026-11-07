@@ -17,7 +17,7 @@
   #feedWrap { flex: 1; display: flex; align-items: center; justify-content: center; min-width: 0; background: #000; }
   #stage { max-width: 100%; max-height: 100%; }
   #placeholder { color: #777; }
-  aside { width: 320px; padding: 16px; border-left: 1px solid #222; overflow-y: auto;
+  aside { width: 360px; flex-shrink: 0; padding: 16px; border-left: 1px solid #222; overflow-y: auto;
           display: flex; flex-direction: column; gap: 14px; }
   section { display: flex; flex-direction: column; gap: 8px; }
   section h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: #aaa; }
@@ -39,6 +39,65 @@
   .legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; }
   .legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 2px;
                          margin-right: 4px; vertical-align: -1px; background: var(--c); }
+  #brain { background: #181c22; border: 1px solid #263040; border-radius: 10px; padding: 12px; }
+  #brainHeadline { font-size: 17px; font-weight: 600; line-height: 1.35; color: #fff; }
+  #brainCounters { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: #263040; border-radius: 999px; padding: 2px 10px; font-size: 13px; }
+  .bsec { font-size: 13px; }
+  .bsec b { color: #9cf; font-weight: 600; }
+  .bsec ul { margin: 2px 0 0; padding-left: 18px; line-height: 1.45; }
+  #brainEvents { margin: 0; font-size: 13px; padding-left: 0; list-style: none; line-height: 1.45; max-height: 220px; overflow-y: auto; }
+  #brainEvents time { color: #888; font-variant-numeric: tabular-nums; margin-right: 6px; }
+  .mini { font-size: 11px; padding: 2px 8px; margin-left: 6px; text-transform: none; letter-spacing: 0; }
+  #srcVideos { position: fixed; left: 0; top: 0; width: 2px; height: 2px; overflow: hidden; opacity: .01; pointer-events: none; }
+  #srcVideos video { width: 2px; height: 2px; }
+  .srcBtns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .srcBtns button.on { background: #1565c0; border-color: #1e88e5; }
+  #fileCtl { display: flex; gap: 6px; flex-wrap: wrap; }
+  #fileCtl select { width: auto; }
+  #recBtn.on { background: #c62828; border-color: #e53935; }
+  #picker { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: flex; align-items: center; justify-content: center; z-index: 10; }
+  #picker[hidden] { display: none; }
+  .pickerBox { background: #1b1b1b; border: 1px solid #333; border-radius: 12px; padding: 18px; width: min(860px, 92vw);
+               max-height: 85vh; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+  .pickerBox h3 { margin: 0; }
+  #pickerList { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+  .pick { display: flex; flex-direction: column; gap: 6px; padding: 8px; text-align: left; }
+  .pick img { width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000; border-radius: 6px; }
+  .pick span { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: #263040; color: #fff;
+           padding: 10px 16px; border-radius: 10px; z-index: 11; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+  #toast[hidden] { display: none; }
+  .mcpRow { display: flex; gap: 6px; align-items: flex-start; }
+  .mcpRow code { flex: 1; background: #1b1b1b; border: 1px solid #333; border-radius: 6px; padding: 6px; font-size: 11px; }
+  #testsetPanel { position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 9; display: flex; align-items: center; justify-content: center; }
+  #testsetPanel[hidden] { display: none; }
+  .tsBox { background: #161616; border: 1px solid #333; border-radius: 12px; width: min(1300px, 96vw); height: 92vh;
+           display: flex; flex-direction: column; overflow: hidden; }
+  .tsHead { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid #2a2a2a; }
+  .tsHead h2 { margin: 0; font-size: 18px; }
+  .tsHead .spacer { flex: 1; }
+  .tsCols { flex: 1; display: grid; grid-template-columns: 1fr 1.3fr; gap: 0; min-height: 0; }
+  .tsCol { overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; border-right: 1px solid #222; }
+  .tsCol h3 { margin: 6px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: #9cf; }
+  .tsForm { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+  .tsForm label, .tsNotes { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: #bbb; }
+  .tsForm input, .tsNotes input { background: #222; color: #eee; border: 1px solid #444; border-radius: 8px; padding: 6px; }
+  .tsActs { font-size: 13px; line-height: 1.9; }
+  .tsActs label { margin-right: 10px; white-space: nowrap; }
+  .tsRow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+  .tsRow select { width: auto; }
+  #tsRec.on { background: #c62828; border-color: #e53935; }
+  .tsList { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; border: 1px solid #2a2a2a; border-radius: 8px; padding: 6px; }
+  .tsClip { display: grid; grid-template-columns: 22px 1fr; gap: 0 6px; padding: 6px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .tsClip small { grid-column: 2; }
+  .tsClip:hover { background: #222; }
+  .tsClip.on { background: #1d3557; }
+  .tsTable { width: 100%; border-collapse: collapse; font-size: 13px; margin: 6px 0 10px; }
+  .tsTable th, .tsTable td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #2a2a2a; vertical-align: top; }
+  .tsTable td:last-child { text-align: left; }
+  .tsOverall td { background: #1b2433; }
+  #tsReport details { margin: 4px 0; font-size: 13px; }
   @media (max-width: 800px) {
     main { flex-direction: column-reverse; overflow: auto; }
     aside { width: 100%; border-left: 0; border-bottom: 1px solid #222; }
@@ -53,8 +112,29 @@
     <span id="trackState" class="muted"></span>
     <span id="trackFps" class="muted"></span>
     <span class="spacer"></span>
+    <span id="recTime" class="muted"></span>
+    <button id="recBtn" title="Record the annotated video plus tracking data">● Record</button>
+    <button id="tsOpen" title="Labelled test clips and accuracy evaluation">Test set</button>
     <button id="toggleQr">Hide QR</button>
   </header>
+  <!-- Video sources are decoded here, kept technically on-screen (tiny, transparent) so
+       the browser keeps delivering frames; the tracker draws them onto the canvas. -->
+  <div id="srcVideos" aria-hidden="true">
+    <video id="rtcVideo" muted playsinline autoplay></video>
+    <video id="screenVideo" muted playsinline autoplay></video>
+    <video id="fileVideo" muted playsinline loop></video>
+  </div>
+  <input type="file" id="fileInput" accept="video/*" hidden>
+  <div id="picker" hidden>
+    <div class="pickerBox">
+      <h3>Pick a window or screen to test on</h3>
+      <small>Tip: play a video in a browser window, then pick that window.</small>
+      <div id="pickerList"></div>
+      <button id="pickerCancel">Cancel</button>
+    </div>
+  </div>
+  <div id="toast" hidden></div>
+  <div id="testsetPanel" hidden></div>
   <main>
     <div id="feedWrap">
       <canvas id="stage" style="display:none"></canvas>
@@ -71,32 +151,71 @@
       </section>
 
       <section>
+        <h3>Video source</h3>
+        <div class="srcBtns">
+          <button data-src="phone" class="on">Phone</button>
+          <button data-src="screen">Screen / window</button>
+          <button data-src="file">Video file</button>
+        </div>
+        <div id="srcInfo" class="muted"></div>
+        <div id="fileCtl" hidden>
+          <button id="filePlay">Pause</button>
+          <button id="fileRestart">Restart</button>
+          <select id="fileSpeed">
+            <option value="1" selected>1×</option>
+            <option value="0.5">0.5×</option>
+            <option value="0.25">0.25×</option>
+          </select>
+          <button id="fileOpen">Open…</button>
+        </div>
+      </section>
+
+      <section id="mcpBox">
+        <h3>Claude (MCP)</h3>
+        <label><input type="checkbox" id="mcpShare" checked> Share live tracking with Claude on this PC</label>
+        <div class="mcpRow">
+          <button id="claudeConnect">Connect to Claude</button>
+          <button id="claudeDisconnect" class="mini" hidden>Disconnect</button>
+        </div>
+        <div id="claudeConn" class="muted"></div>
+        <small class="muted">Then ask Claude things like "what am I doing?" or "how were my last squats?"</small>
+        <details><summary class="muted">Manual setup</summary>
+          <div class="mcpRow"><code id="mcpCmd"></code><button id="mcpCopy" class="mini">Copy</button></div>
+        </details>
+        <div id="mcpStatus" class="muted"></div>
+      </section>
+
+      <section id="brain">
+        <h3>Brain: what they're doing</h3>
+        <div id="brainHeadline">Waiting for someone…</div>
+        <div id="brainCounters"></div>
+        <div id="brainDetails"></div>
+        <h3>Timeline <button id="brainReset" class="mini">Reset</button></h3>
+        <ul id="brainEvents"><li class="muted">Nothing yet</li></ul>
+      </section>
+
+      <section>
         <h3>Tracking</h3>
         <div class="toggles">
           <label><input type="checkbox" id="opt-body"> Body</label>
           <label><input type="checkbox" id="opt-hands"> Hands</label>
+          <label><input type="checkbox" id="opt-face"> Face</label>
           <label><input type="checkbox" id="opt-video"> Video</label>
         </div>
-        <select id="opt-model">
-          <option value="heavy" selected>Body model: Accurate (heavy)</option>
-          <option value="full">Body model: Fast (full)</option>
+        <select id="opt-model" title="Auto picks the lightest model that covers what's ticked">
+          <option value="auto" selected>Model: Auto (from the boxes above)</option>
+          <option value="holistic">Model: Holistic (body + hands + face)</option>
+          <option value="heavy">Model: Separate, accurate body</option>
+          <option value="full">Model: Separate, fast body</option>
         </select>
+        <small class="muted">Auto uses Holistic (most accurate on the test set). The boxes
+          choose what's shown and described; hidden hands still guard against false bodies.</small>
         <div class="legend">
           <span style="--c:#ffd54f">Head</span><span style="--c:#4fc3f7">L arm</span>
           <span style="--c:#f06292">R arm</span><span style="--c:#81c784">L leg</span>
           <span style="--c:#ffb74d">R leg</span><span style="--c:#ba68c8">Hands</span>
         </div>
         <div id="bodyState" class="muted">No body detected</div>
-      </section>
-
-      <section>
-        <h3>Head</h3>
-        <div id="head" class="muted">Head not visible</div>
-      </section>
-
-      <section>
-        <h3>Hands</h3>
-        <div id="handsInfo" class="muted">No hands</div>
       </section>
 
       <section>
@@ -138,23 +257,33 @@ fetch('/info').then(r => r.json()).then(({ phoneUrls }) => {
 
 qrBtn.onclick = () => setQrVisible(connect.classList.contains('hidden'));
 
-let seen = false;
+window.setQrVisible = setQrVisible;   // the tracker hides the QR on the first frame
+
 setInterval(async () => {
   try {
-    const s = await (await fetch('/status')).json();
-    document.getElementById('dot').classList.toggle('on', s.connected);
-    document.getElementById('state').textContent = s.connected ? 'Phone connected' : 'Waiting for phone…';
-    document.getElementById('fps').textContent = s.connected ? `${s.fps.toFixed(1)} fps in` : '';
-    if (s.frames > 0 && !seen) {
-      // First frame: show the feed and tuck the QR away to make room.
-      seen = true;
-      document.getElementById('stage').style.display = '';
-      document.getElementById('placeholder').style.display = 'none';
-      setQrVisible(false);
+    const src = window.camSource;
+    let on, state, fps = '';
+    if (src && src.mode !== 'phone') {
+      on = !!src.activeVideo();
+      state = src.mode === 'screen' ? 'Testing on screen capture' : 'Testing on a video file';
+    } else if (src?.rtcLive) {
+      on = true; state = 'Phone connected (video)'; fps = `${Math.round(src.rtcFps)} fps in`;
+    } else {
+      const s = await (await fetch('/status')).json();
+      on = s.connected;
+      state = s.connected ? 'Phone connected (pictures)' : 'Waiting for phone…';
+      fps = s.connected ? `${s.fps.toFixed(1)} fps in` : '';
     }
+    document.getElementById('dot').classList.toggle('on', on);
+    document.getElementById('state').textContent = state;
+    document.getElementById('fps').textContent = fps;
   } catch {}
 }, 1000);
 </script>
+<script type="module" src="/sources.js"></script>
+<script type="module" src="/brain.js"></script>
+<script type="module" src="/eval.js"></script>
+<script type="module" src="/mcp-bridge.js"></script>
 <script type="module" src="/tracker.js"></script>
 </body>
 </html>

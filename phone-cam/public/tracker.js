@@ -4,7 +4,7 @@
 // Latest results are on window.tracking and fired as a 'tracking' event on window,
 // so other code can react to movement without touching this file.
 
-import { FilesetResolver, PoseLandmarker, HandLandmarker } from '/mp/vision_bundle.mjs';
+import { FilesetResolver, PoseLandmarker, HandLandmarker, HolisticLandmarker } from '/mp/vision_bundle.mjs';
 
 // ---------- pose skeleton, grouped by body part ----------
 // MediaPipe "left" = the person's left.
@@ -33,7 +33,9 @@ const MOVERS = { 'Head': 0, 'L hand': 15, 'R hand': 16, 'L foot': 27, 'R foot': 
 const VIS = 0.5;        // landmark visibility to trust it (solid lines, angles)
 const VIS_FAINT = 0.2;  // below VIS but above this: drawn dashed so limbs don't just vanish
 const MASK_MIN = 0.5;   // body-outline coverage needed at the torso to count as a real person
-const CONFIRM_FRAMES = 3; // a new person must show up this many frames in a row
+const CONFIRM_FRAMES = 3;
+const CLOSEUP_AREA = 0.07;  // a hand covering > 7% of the frame = camera is too close to see a body
+const EDGE = 0.02;          // landmarks further than this outside the frame are guesses: hide them // a new person must show up this many frames in a row
 
 const POSE_MODELS = {
   heavy: '/models/pose_landmarker_heavy.task',  // most accurate, best for legs / far away
@@ -77,10 +79,16 @@ const smoothLm = makeSmoother(), smoothWorld = makeSmoother();
 // ---------- setup ----------
 const canvas = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
-const opts = { body: true, hands: true, video: true };
+const opts = { body: true, hands: true, face: true, video: true };
 for (const k of Object.keys(opts)) {
   const el = document.getElementById('opt-' + k);
-  if (el) { el.checked = opts[k]; el.onchange = () => { opts[k] = el.checked; }; }
+  if (el) {
+    el.checked = opts[k];
+    el.onchange = () => { opts[k] = el.checked; if (k !== 'video') autoPipeline(); };
+  }
+}
+function syncBoxes() {
+  for (const k of Object.keys(opts)) { const el = document.getElementById('opt-' + k); if (el) el.checked = opts[k]; }
 }
 const setText = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
 
@@ -102,38 +110,81 @@ async function create(Task, model, extra) {
   throw lastErr;
 }
 
-const createPose = (which) => create(PoseLandmarker, POSE_MODELS[which], {
-  numPoses: 1,
-  minPoseDetectionConfidence: 0.6,
-  minPosePresenceConfidence: 0.6,
-  minTrackingConfidence: 0.6,
-  outputSegmentationMasks: true,   // used to reject "people" that aren't there
-});
+// ---------- pipelines ----------
+//  holistic: ONE model for body + both hands + face. Hands are found from the body's own
+//            wrists, so left/right is right by construction, and the face mesh gives an
+//            accurate head direction and expressions.
+//  heavy / full: the older setup, a separate body model plus a separate hand model,
+//            kept so the two can be compared on the test set.
+let pipe = null;              // { kind, choice, holistic? , pose?, hands?, delegate }
+let handsTask = null;         // shared hand model for the separate pipelines
 
-const modelSel = document.getElementById('opt-model');
-let pose, hands;
-try {
-  [pose, hands] = await Promise.all([
-    createPose(modelSel?.value || 'heavy'),
-    create(HandLandmarker, '/models/hand_landmarker.task', {
+async function loadPipeline(choice) {
+  if (choice === 'holistic') {
+    const h = await create(HolisticLandmarker, '/models/holistic_landmarker.task', {
+      minPoseDetectionConfidence: 0.6,
+      minPosePresenceConfidence: 0.6,
+      minFaceDetectionConfidence: 0.5,
+      minFacePresenceConfidence: 0.5,
+      minHandLandmarksConfidence: 0.5,
+      outputFaceBlendshapes: true,          // smiling, mouth open, eyes closed...
+      outputPoseSegmentationMasks: true,    // used to reject "people" that aren't there
+    });
+    // Holistic finds hands from the body's wrists, so with no body in view (a close-up)
+    // it finds no hands either. Keep the standalone hand model as a fallback for that.
+    handsTask ||= await create(HandLandmarker, '/models/hand_landmarker.task', {
+      numHands: 2, minHandDetectionConfidence: 0.6, minHandPresenceConfidence: 0.6, minTrackingConfidence: 0.5,
+    });
+    return { kind: 'holistic', choice, holistic: h.task, hands: handsTask.task, delegate: h.delegate };
+  }
+  const [p, hd] = await Promise.all([
+    create(PoseLandmarker, POSE_MODELS[choice], {
+      numPoses: 1,
+      minPoseDetectionConfidence: 0.6,
+      minPosePresenceConfidence: 0.6,
+      minTrackingConfidence: 0.6,
+      outputSegmentationMasks: true,
+    }),
+    handsTask || create(HandLandmarker, '/models/hand_landmarker.task', {
       numHands: 2, minHandDetectionConfidence: 0.6, minHandPresenceConfidence: 0.6, minTrackingConfidence: 0.5,
     }),
   ]);
-  setText('trackState', `Tracker ready (${pose.delegate})`);
-} catch (e) {
-  setText('trackState', 'MediaPipe failed to load: ' + e.message);
-  throw e;
+  handsTask = hd;
+  return { kind: 'separate', choice, pose: p.task, hands: hd.task, delegate: p.delegate };
 }
 
-if (modelSel) modelSel.onchange = async () => {
-  const old = pose;
-  pose = null;                       // frames skip body tracking while the new model loads
-  setText('trackState', 'Switching model…');
-  try { pose = await createPose(modelSel.value); old.task.close(); }
-  catch (e) { pose = old; console.warn(e); }
-  smoothLm.reset(); smoothWorld.reset();
-  setText('trackState', `Tracker ready (${pose.delegate})`);
-};
+function closePipeline(pp) {
+  if (!pp) return;
+  if (pp.holistic) pp.holistic.close();
+  if (pp.pose) pp.pose.close();          // the hand model is shared and kept
+}
+
+async function switchPipeline(choice) {
+  const old = pipe;
+  pipe = null;                          // frames are skipped while the new model loads
+  setText('trackState', 'Loading model…');
+  try {
+    const next = await loadPipeline(choice);
+    closePipeline(old);
+    pipe = next;
+  } catch (e) {
+    console.warn(e);
+    pipe = old;
+    setText('trackState', `Could not load ${choice}: ${e.message}`);
+    return pipe;
+  }
+  resetTracking();
+  showState();
+  return pipe;
+}
+const PIPE_NAMES = { holistic: 'Holistic', heavy: 'Separate (accurate)', full: 'Separate (fast)' };
+function showState() {
+  if (!pipe) return;
+  const parts = [opts.body && 'body', opts.hands && 'hands', opts.face && pipe.kind === 'holistic' && 'face'].filter(Boolean);
+  const note = opts.face && pipe.kind !== 'holistic' ? ' · face needs Holistic' : '';
+  setText('trackState', `Tracking ${parts.join(' + ') || 'nothing'} · ${PIPE_NAMES[pipe.choice]} (${pipe.delegate})${note}`);
+}
+
 
 // ---------- math ----------
 function angle3(a, b, c) {
@@ -173,13 +224,66 @@ function fingersUp(hl) {
   return n;
 }
 
-// Is this a real person? MediaPipe will happily fit a skeleton to furniture, so check
-// that its body-outline mask actually covers the torso, and that the torso is visible.
-function isRealPerson(lm, mask) {
-  const torso = [11, 12, 23, 24];
-  const vis = torso.reduce((s, i) => s + lm[i].visibility, 0) / torso.length;
-  if (vis < 0.6) return { ok: false, why: 'torso not visible' };
-  if (!mask) return { ok: true };
+// Bounding box of a hand (normalised coords), grown by `pad` of its size on each side.
+function handBox(hl, pad = 0.15) {
+  let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+  for (const p of hl) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+  const px = (x1 - x0) * pad, py = (y1 - y0) * pad;
+  return { x0: x0 - px, y0: y0 - py, x1: x1 + px, y1: y1 + py, area: (x1 - x0) * (y1 - y0) };
+}
+const inBox = (p, b) => p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1;
+
+// Is this a real person? MediaPipe always draws a full 33-point body once it thinks it
+// sees someone, and will fit one to furniture, or to a palm it mistook for a face.
+// Reject it when:
+//   - a hand fills the frame (close-up: no body can be in view),
+//   - the "face" sits inside a hand the hand tracker found (a palm, not a face),
+//   - the body's proportions are impossible,
+//   - the torso isn't visible, or the body-outline mask doesn't cover the torso.
+// `hard` failures drop a confirmed person at once; soft ones (which a real person
+// can fail for a frame or two) only after several misses in a row.
+// `trusted` = this person is already confirmed: then a hand near the face is just a hand
+// near a real face (scratching the head, drinking), not a palm mistaken for a face.
+function isRealPerson(lm, world, mask, handLms, trusted = false) {
+  const boxes = handLms.map((hl) => handBox(hl));
+  if (boxes.some((b) => b.area > CLOSEUP_AREA)) return { ok: false, hard: true, why: 'close-up on a hand' };
+  const faceIds = [0, 2, 5].filter((i) => lm[i].visibility >= VIS);
+  if (!trusted && faceIds.length && boxes.some((b) => faceIds.filter((i) => inBox(lm[i], b)).length >= Math.ceil(faceIds.length / 2))) {
+    return { ok: false, hard: true, why: 'the "face" was really a hand' };
+  }
+
+  // Shoulders are required; hips are not: head-and-shoulders close-ups are normal.
+  const shVis = (lm[11].visibility + lm[12].visibility) / 2;
+  const hipVis = (lm[23].visibility + lm[24].visibility) / 2;
+  const vis = (shVis + hipVis) / 2;
+  if (shVis < 0.6) return { ok: false, why: 'shoulders not visible' };
+  const upperOnly = hipVis < 0.5;
+
+  // Proportions in 3D (metres). In the flat image a side-on person's shoulders overlap
+  // and look zero-width; the 3D points keep their real width, so this works at any angle.
+  if (world) {
+    const d3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    const m3 = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 });
+    const shMid = m3(world[11], world[12]), hipMid = m3(world[23], world[24]);
+    const shW = d3(world[11], world[12]);
+    if (!upperOnly) {
+      const torsoLen = d3(shMid, hipMid);
+      if (torsoLen < 0.15) return { ok: false, why: 'torso collapsed' };
+      const ratio = shW / torsoLen;                 // real people: roughly 0.5 - 1.1
+      if (ratio < 0.25) return { ok: false, why: 'body proportions impossible (too thin)' };
+      if (ratio > 1.8) return { ok: false, why: 'body proportions impossible (too wide)' };
+      if (lm[0].visibility >= VIS && d3(world[0], shMid) / torsoLen > 1.2) {
+        return { ok: false, why: 'head too far from shoulders' };
+      }
+    } else if (lm[0].visibility >= VIS) {
+      // hips out of view: compare the shoulders with the head instead
+      const headDist = d3(world[0], shMid);       // nose to between the shoulders, ~0.2-0.3 m
+      const ratio = shW / (headDist || 1);         // real people: roughly 1 - 2.5
+      if (ratio < 0.4 || ratio > 5) return { ok: false, why: 'head and shoulders proportions impossible' };
+    }
+  }
+
+  if (!mask) return { ok: true, vis, upperOnly };
   const data = mask.getAsFloat32Array();
   const at = (x, y) => {
     const px = Math.min(mask.width - 1, Math.max(0, Math.round(x * mask.width)));
@@ -187,15 +291,19 @@ function isRealPerson(lm, mask) {
     return data[py * mask.width + px];
   };
   const mid = (a, b, t = 0.5) => ({ x: lm[a].x + (lm[b].x - lm[a].x) * t, y: lm[a].y + (lm[b].y - lm[a].y) * t });
-  // sample along the torso: shoulder centre, chest, belly, hip centre
+  // sample down the torso from the shoulders (only the part that's inside the picture)
   const sh = mid(11, 12), hp = mid(23, 24);
-  const samples = [0.1, 0.35, 0.6, 0.85].map((t) => at(sh.x + (hp.x - sh.x) * t, sh.y + (hp.y - sh.y) * t));
-  const cover = samples.reduce((s, v) => s + v, 0) / samples.length;
+  const pts = (upperOnly ? [0.05, 0.15, 0.25] : [0.1, 0.35, 0.6, 0.85])
+    .map((t) => ({ x: sh.x + (hp.x - sh.x) * t, y: sh.y + (hp.y - sh.y) * t }))
+    .filter((p) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1);
+  if (!pts.length) return { ok: true, vis, upperOnly };
+  const cover = pts.reduce((s, p) => s + at(p.x, p.y), 0) / pts.length;
   return cover >= MASK_MIN ? { ok: true, cover, vis } : { ok: false, why: 'no body under skeleton', cover, vis };
 }
 
 // ---------- drawing ----------
-function drawPose(lm, w, h) {
+// fade < 1 = predicted (bridging a gap), drawn see-through
+function drawPose(lm, w, h, fade = 1) {
   const lw = Math.max(2, w / 250);
   ctx.lineCap = 'round';
   for (const p of Object.values(PARTS)) {
@@ -205,7 +313,7 @@ function drawPose(lm, w, h) {
       const v = Math.min(lm[a].visibility, lm[b].visibility);
       if (v < VIS_FAINT) continue;
       const faint = v < VIS;            // uncertain (e.g. partly hidden leg): dashed + see-through
-      ctx.globalAlpha = faint ? 0.55 : 1;
+      ctx.globalAlpha = (faint ? 0.55 : 1) * fade;
       ctx.setLineDash(faint ? [lw * 2, lw * 2] : []);
       ctx.beginPath();
       ctx.moveTo(lm[a].x * w, lm[a].y * h);
@@ -217,7 +325,7 @@ function drawPose(lm, w, h) {
   ctx.setLineDash([]);
   for (let i = 0; i < lm.length; i++) {
     if (lm[i].visibility < VIS_FAINT || !POINT_PART[i]) continue;
-    ctx.globalAlpha = lm[i].visibility < VIS ? 0.55 : 1;
+    ctx.globalAlpha = (lm[i].visibility < VIS ? 0.55 : 1) * fade;
     ctx.fillStyle = PARTS[POINT_PART[i]].color;
     ctx.beginPath();
     ctx.arc(lm[i].x * w, lm[i].y * h, lw * 1.3, 0, Math.PI * 2);
@@ -242,8 +350,9 @@ function drawAngleLabels(lm, angles, w, h) {
   }
 }
 
-function drawHand(hl, w, h) {
+function drawHand(hl, w, h, fade = 1) {
   const lw = Math.max(2, w / 350);
+  ctx.globalAlpha = fade;
   ctx.strokeStyle = 'rgba(255,255,255,.9)';
   ctx.lineWidth = lw;
   for (const { start, end } of HandLandmarker.HAND_CONNECTIONS) {
@@ -254,41 +363,102 @@ function drawHand(hl, w, h) {
   }
   ctx.fillStyle = '#ba68c8';
   for (const p of hl) { ctx.beginPath(); ctx.arc(p.x * w, p.y * h, lw * 1.4, 0, Math.PI * 2); ctx.fill(); }
+  ctx.globalAlpha = 1;
 }
+
 
 // ---------- per-frame ----------
 const speed = {};               // smoothed m/s per mover
 let prevWorld = null, prevT = 0;
-let seenFrames = 0, lastReject = null;
+let seenFrames = 0, missFrames = 0, confirmed = false, lastReject = null, lastConfirmedAt = -1e9;
+const MAX_MISSES = 4;
+const HOLD_MS = 300;            // bridge gaps this long by predicting where the body/hands went
+const REACQUIRE_MS = 1000;      // someone seen this recently comes back after 1 good frame
+let lastGood = null;            // { t, lm, world, angles, vel }
+let lastHands = [];             // [{ t, hand }] from the last real detections
 let procCount = 0, procT0 = performance.now();
+let shownFirst = false;
+let tsOffset = 0, lastMpT = 0;
 
-function processFrame(bmp) {
-  const t = performance.now();
-  const w = bmp.width, h = bmp.height;
+// src: ImageBitmap (picture mode) or <video> (WebRTC, screen, file).
+// clock (ms, optional): the evaluator passes the clip's own time, so motion and timing
+// behave the same however fast it steps through a clip.
+function processFrame(src, w, h, clock) {
+  const t = clock ?? performance.now();
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
 
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, w, h);
-  if (opts.video) ctx.drawImage(bmp, 0, 0);
+  if (opts.video) ctx.drawImage(src, 0, 0, w, h);
 
-  const out = { t: Date.now(), width: w, height: h, pose: null, hands: [] };
+  const out = { t: clock ?? Date.now(), width: w, height: h, pose: null, hands: [], view: 'none' };
 
-  if (opts.body && pose) {
-    const r = pose.task.detectForVideo(bmp, t);
-    const rawLm = r.landmarks?.[0], rawWorld = r.worldLandmarks?.[0];
-    const check = rawLm ? isRealPerson(rawLm, r.segmentationMasks?.[0]) : { ok: false, why: 'nobody' };
-    r.segmentationMasks?.forEach((m) => m.close());
-    seenFrames = check.ok ? seenFrames + 1 : 0;
+  if (!pipe) return null;                       // model is (re)loading
+  // MediaPipe needs strictly increasing timestamps. Live frames and the evaluator's
+  // clip clock are different clocks, so shift onto one rising timeline while keeping
+  // the spacing between frames (its smoothing uses that spacing).
+  if (t + tsOffset <= lastMpT) tsOffset = lastMpT + 33 - t;
+  const mpT = t + tsOffset;
+  lastMpT = mpT;
+  const det = detect(src, mpT);
+
+  // Hands first: the body checks use them.
+  if (opts.hands) {
+    for (const hd of det.hands) out.hands.push({ ...hd, fingersUp: fingersUp(hd.landmarks), box: handBox(hd.landmarks, 0) });
+    // Bridge brief hand drop-outs (fast motion blurs hands): keep a hand we saw
+    // < HOLD_MS ago if nothing was found near where it was. Marked `predicted`, so the
+    // brain won't read gestures from it.
+    const now = out.hands.map((x) => x.box);
+    for (const prev of lastHands) {
+      if (t - prev.t > HOLD_MS) continue;
+      const b = prev.hand.box, cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2, sz = Math.max(b.x1 - b.x0, b.y1 - b.y0);
+      if (!now.some((n) => Math.hypot((n.x0 + n.x1) / 2 - cx, (n.y0 + n.y1) / 2 - cy) < sz * 1.5)) {
+        out.hands.push({ ...prev.hand, predicted: true });
+      }
+    }
+    const real = out.hands.filter((x) => !x.predicted);
+    lastHands = [
+      ...real.map((hand) => ({ t, hand })),
+      ...lastHands.filter((p) => t - p.t <= HOLD_MS && out.hands.some((x) => x.predicted && x.landmarks === p.hand.landmarks)),
+    ];
+  }
+
+  if (opts.body) {
+    let rawLm = det.pose?.lm, rawWorld = det.pose?.world;
+    // Points the model placed outside the picture are guesses: mark them not visible,
+    // so only the parts actually in view get drawn and described.
+    if (rawLm) {
+      rawLm = rawLm.map((p) => (p.x < -EDGE || p.x > 1 + EDGE || p.y < -EDGE || p.y > 1 + EDGE ? { ...p, visibility: 0 } : p));
+      // Keep left and right consistent: the model sometimes swaps them (close-ups, an
+      // arm crossing the body). If it did, swap the whole body back, hands included.
+      const fix = fixSides(rawLm, rawWorld, det.faceGuard, t);
+      if (fix.swapped) {
+        rawLm = fix.lm; rawWorld = fix.world;
+        for (const hd of out.hands) if (hd.sideKnown) hd.side = hd.side === 'left' ? 'right' : 'left';
+      }
+      out.sideFix = fix.why;
+    }
+    let check = rawLm
+      ? isRealPerson(rawLm, rawWorld, det.pose.mask, det.guard, confirmed)
+      : { ok: false, why: 'nobody' };
+
+    // Hysteresis: a new person must pass CONFIRM_FRAMES in a row (just 1 if we saw them
+    // in the last second); a confirmed person is kept through up to MAX_MISSES soft
+    // failures in a row. Hard failures and "nobody detected" drop them straight away.
+    if (check.ok) { seenFrames++; missFrames = 0; }
+    else if (confirmed && rawLm && !check.hard && missFrames < MAX_MISSES) {
+      missFrames++;
+      check = { ...check, ok: true, kept: true };
+    } else { seenFrames = 0; missFrames = 0; confirmed = false; }
+    const need = t - lastConfirmedAt < REACQUIRE_MS ? 1 : CONFIRM_FRAMES;
+    if (check.ok && seenFrames >= need) confirmed = true;
     lastReject = check.ok ? null : check.why;
     out.check = check;
 
-    if (check.ok && seenFrames >= CONFIRM_FRAMES) {
+    if (check.ok && confirmed) {
+      lastConfirmedAt = t;
       const lm = smoothLm.apply(rawLm, t), world = smoothWorld.apply(rawWorld, t);
-      const angles = {};
-      for (const [label, a, b, c] of JOINTS) {
-        angles[label] = Math.min(lm[a].visibility, lm[b].visibility, lm[c].visibility) >= VIS
-          ? angle3(world[a], world[b], world[c]) : null;
-      }
+      const angles = jointAngles(lm, world);
       if (prevWorld && t > prevT) {
         const dt = (t - prevT) / 1000;
         for (const [name, i] of Object.entries(MOVERS)) {
@@ -298,36 +468,227 @@ function processFrame(bmp) {
           speed[name] = (speed[name] ?? v) * 0.7 + v * 0.3;   // exponential smoothing
         }
       }
+      // velocity of every landmark (per ms), smoothed, for bridging gaps
+      let vel = lm.map(() => ({ x: 0, y: 0, z: 0 })), wvel = vel;
+      if (lastGood && t > lastGood.t && t - lastGood.t < 500) {
+        const dt = t - lastGood.t;
+        vel = lm.map((p, i) => ({
+          x: lastGood.vel[i].x * 0.5 + 0.5 * (p.x - lastGood.lm[i].x) / dt,
+          y: lastGood.vel[i].y * 0.5 + 0.5 * (p.y - lastGood.lm[i].y) / dt,
+          z: 0,
+        }));
+        wvel = world.map((p, i) => ({
+          x: lastGood.wvel[i].x * 0.5 + 0.5 * (p.x - lastGood.world[i].x) / dt,
+          y: lastGood.wvel[i].y * 0.5 + 0.5 * (p.y - lastGood.world[i].y) / dt,
+          z: lastGood.wvel[i].z * 0.5 + 0.5 * (p.z - lastGood.world[i].z) / dt,
+        }));
+      }
+      lastGood = { t, lm, world, vel, wvel };
       prevWorld = world; prevT = t;
       drawPose(lm, w, h);
       drawAngleLabels(lm, angles, w, h);
       out.pose = { landmarks: lm, worldLandmarks: world, angles, head: headPose(lm, w, h), speed: { ...speed } };
+    } else if (lastGood && !check.hard && t - lastGood.t < HOLD_MS) {
+      // Lost them for a moment (often motion blur): carry on along their last motion,
+      // drawn faded, instead of making the skeleton vanish.
+      const dt = Math.min(t - lastGood.t, HOLD_MS);
+      const lm = lastGood.lm.map((p, i) => ({ ...p, x: p.x + lastGood.vel[i].x * dt, y: p.y + lastGood.vel[i].y * dt, visibility: p.visibility * 0.9 }));
+      const world = lastGood.world.map((p, i) => ({ ...p, x: p.x + lastGood.wvel[i].x * dt, y: p.y + lastGood.wvel[i].y * dt, z: p.z + lastGood.wvel[i].z * dt }));
+      drawPose(lm, w, h, 0.4);
+      out.pose = { landmarks: lm, worldLandmarks: world, angles: jointAngles(lm, world), head: headPose(lm, w, h), speed: { ...speed }, predicted: true };
     } else if (!check.ok) {
-      prevWorld = null;
+      prevWorld = null; lastGood = null;
       smoothLm.reset(); smoothWorld.reset();
     }
   }
 
-  if (opts.hands) {
-    const r = hands.task.detectForVideo(bmp, t);
-    (r.landmarks || []).forEach((hl, i) => {
-      drawHand(hl, w, h);
-      out.hands.push({
-        landmarks: hl,
-        // MediaPipe assumes a mirrored selfie image; with the back camera this label is swapped.
-        handedness: r.handedness?.[i]?.[0]?.categoryName,
-        fingersUp: fingersUp(hl),
-      });
-    });
+  det.close();
+
+  // Face (Holistic only): drop it if the "face" was really a palm.
+  if (opts.body && det.face && !(lastReject && out.check?.hard)) {
+    out.face = det.face;
+    drawFace(det.face.landmarks, w, h);
   }
+
+  for (const hd of out.hands) drawHand(hd.landmarks, w, h, hd.predicted ? 0.4 : 1);
+  out.view = out.pose ? 'body' : out.hands.length ? 'hands' : 'none';
+  out.closeup = det.guard.some((hl) => handBox(hl, 0).area > CLOSEUP_AREA);
+  out.parts = { body: opts.body, hands: opts.hands, face: opts.face && pipe.kind === 'holistic' };
+  out.bodyRejected = lastReject && lastReject !== 'nobody' ? lastReject : null;
+  out.source = window.camSource?.label?.() || 'pictures';
+  out.pipeline = pipe.choice;
 
   procCount++;
   const el = (performance.now() - procT0) / 1000;
   if (el > 1) { setText('trackFps', `${(procCount / el).toFixed(1)} fps tracked`); procCount = 0; procT0 = performance.now(); }
 
+  if (!shownFirst) {
+    // first frame from any source: show the canvas, tuck the QR away
+    shownFirst = true;
+    document.getElementById('stage').style.display = '';
+    document.getElementById('placeholder').style.display = 'none';
+    window.setQrVisible?.(false);
+  }
+
   window.tracking = out;
   window.dispatchEvent(new CustomEvent('tracking', { detail: out }));
   renderPanel(out);
+  return out;
+}
+
+let guardFrame = 0, guardCache = null;
+
+// ---------- keeping left and right consistent ----------
+// Pose landmark pairs (left id, right id).
+const LR_PAIRS = [[1, 4], [2, 5], [3, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16], [17, 18], [19, 20],
+  [21, 22], [23, 24], [25, 26], [27, 28], [29, 30], [31, 32]];
+const swapLR = (arr) => {
+  if (!arr) return arr;
+  const a = arr.slice();
+  for (const [l, r] of LR_PAIRS) { a[l] = arr[r]; a[r] = arr[l]; }
+  return a;
+};
+let sideRef = null;   // where each limb was on the last frame: { t, lm }
+
+// Decide whether the model's left/right labels are swapped this frame.
+//  1. Face (most reliable, when the face mesh sees a fairly frontal face): the
+//     cheek-to-cheek direction says which side of the picture the person's left is on;
+//     the shoulders must agree.
+//  2. Continuity: limbs move smoothly, so if "left elbow/wrist/knee/ankle" are now
+//     where the right ones were a moment ago (and vice versa), the labels flipped.
+function fixSides(lm, world, face, t) {
+  let swap = false, why = null;
+  const vis = (i) => lm[i].visibility >= 0.3;
+  if (face && vis(11) && vis(12)) {
+    const F = face.landmarks;
+    const fx = F[454].x - F[234].x, fy = F[454].y - F[234].y, fz = F[454].z - F[234].z;
+    const frontal = Math.abs(fx) / (Math.hypot(fx, fy, fz) || 1);
+    const sx = lm[11].x - lm[12].x;
+    if (frontal > 0.6 && Math.abs(sx) > 0.02 && Math.sign(sx) !== Math.sign(fx)) { swap = true; why = 'face'; }
+  }
+  if (!why && sideRef && t - sideRef.t < 600) {
+    let keep = 0, cross = 0, n = 0;
+    for (const [l, r] of [[13, 14], [15, 16], [25, 26], [27, 28]]) {
+      const P = sideRef.lm;
+      if (!(vis(l) && vis(r) && P[l].visibility >= 0.3 && P[r].visibility >= 0.3)) continue;
+      const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+      keep += d(lm[l], P[l]) + d(lm[r], P[r]);
+      cross += d(lm[l], P[r]) + d(lm[r], P[l]);
+      n++;
+    }
+    if (n && keep > 0.04 * n && cross < keep * 0.5) { swap = true; why = 'continuity'; }
+  }
+  const outLm = swap ? swapLR(lm) : lm;
+  sideRef = { t, lm: outLm };
+  return { swapped: swap, why, lm: outLm, world: swap ? swapLR(world) : world };
+}
+
+// One call per frame to whichever pipeline is loaded; same output shape for both.
+// hands = what's shown and described; guard = hands used only for the ghost checks.
+function detect(src, t) {
+  if (pipe.kind === 'holistic') {
+    const r = pipe.holistic.detectForVideo(src, t);
+    const hands = [];
+    for (const [side, L, Wl] of [['left', r.leftHandLandmarks, r.leftHandWorldLandmarks], ['right', r.rightHandLandmarks, r.rightHandWorldLandmarks]]) {
+      // attached to the body's own left/right wrist, so the side is known for sure
+      if (L?.[0]?.length) hands.push({ landmarks: L[0], worldLandmarks: Wl?.[0], handedness: side, side, sideKnown: true });
+    }
+    // Side-on, the hidden arm's wrist is often guessed on top of the visible one, and
+    // the same physical hand then comes back twice. Keep the one whose wrist is visible.
+    const pl = r.poseLandmarks?.[0];
+    if (hands.length === 2 && pl) {
+      const c = (hl) => { let x = 0, y = 0; for (const p of hl) { x += p.x; y += p.y; } return { x: x / hl.length, y: y / hl.length }; };
+      const a = c(hands[0].landmarks), b = c(hands[1].landmarks);
+      const size = Math.hypot(hands[0].landmarks[9].x - hands[0].landmarks[0].x, hands[0].landmarks[9].y - hands[0].landmarks[0].y);
+      if (Math.hypot(a.x - b.x, a.y - b.y) < size * 0.6) {
+        const vis = (side) => pl[side === 'left' ? 15 : 16].visibility;
+        hands.splice(vis(hands[0].side) >= vis(hands[1].side) ? 1 : 0, 1);
+      }
+    }
+    // Hands are still used for the ghost-body checks even when hidden.
+    const guard = hands.map((x) => x.landmarks);
+    if (!r.poseLandmarks?.[0]?.length && opts.hands) {
+      // no body: close-up mode, use the standalone hand model
+      const hr = pipe.hands.detectForVideo(src, t);
+      (hr.landmarks || []).forEach((hl, i) => {
+        const label = hr.handedness?.[i]?.[0]?.categoryName;
+        hands.push({ landmarks: hl, worldLandmarks: hr.worldLandmarks?.[i], handedness: label, side: label === 'Left' ? 'left' : label === 'Right' ? 'right' : null });
+      });
+    }
+    const face = r.faceLandmarks?.[0]?.length ? {
+      landmarks: r.faceLandmarks[0],
+      blendshapes: Object.fromEntries((r.faceBlendshapes?.[0]?.categories || []).map((c) => [c.categoryName, c.score])),
+    } : null;
+    return {
+      hands: opts.hands ? hands : [], guard, face: opts.face ? face : null, faceGuard: face,
+      pose: r.poseLandmarks?.[0]?.length ? { lm: r.poseLandmarks[0], world: r.poseWorldLandmarks?.[0], mask: r.poseSegmentationMasks?.[0] } : null,
+      close: () => r.poseSegmentationMasks?.forEach((m) => m.close()),
+    };
+  }
+  let hr = null;
+  if (opts.hands) hr = pipe.hands.detectForVideo(src, t);
+  else if (opts.body && guardFrame++ % 3 === 0) {
+    // Hands hidden: still glance for hands every 3rd frame, only so the ghost-body checks
+    // (close-up, palm mistaken for a face) keep working. Never shown or described.
+    hr = pipe.hands.detectForVideo(src, t);
+    guardCache = { t, lms: hr.landmarks || [] };
+  }
+  const pr = opts.body ? pipe.pose.detectForVideo(src, t) : null;
+  const guard = opts.hands ? (hr?.landmarks || []) : (guardCache && t - guardCache.t < 400 ? guardCache.lms : []);
+  const hands = (opts.hands ? hr?.landmarks || [] : []).map((hl, i) => {
+    const label = hr.handedness?.[i]?.[0]?.categoryName;
+    // only a fallback: the brain matches hands to the body's wrists when it can
+    return { landmarks: hl, worldLandmarks: hr.worldLandmarks?.[i], handedness: label, side: label === 'Left' ? 'left' : label === 'Right' ? 'right' : null };
+  });
+  return {
+    hands, guard, face: null,
+    pose: pr?.landmarks?.[0] ? { lm: pr.landmarks[0], world: pr.worldLandmarks?.[0], mask: pr.segmentationMasks?.[0] } : null,
+    close: () => pr?.segmentationMasks?.forEach((m) => m.close()),
+  };
+}
+
+function drawFace(fl, w, h) {
+  const groups = ['FACE_LANDMARKS_FACE_OVAL', 'FACE_LANDMARKS_LIPS', 'FACE_LANDMARKS_LEFT_EYE', 'FACE_LANDMARKS_RIGHT_EYE',
+    'FACE_LANDMARKS_LEFT_EYEBROW', 'FACE_LANDMARKS_RIGHT_EYEBROW'];
+  ctx.strokeStyle = 'rgba(255, 213, 79, .7)';
+  ctx.lineWidth = Math.max(1, w / 600);
+  ctx.beginPath();
+  for (const g of groups) {
+    for (const { start, end } of HolisticLandmarker[g] || []) {
+      ctx.moveTo(fl[start].x * w, fl[start].y * h);
+      ctx.lineTo(fl[end].x * w, fl[end].y * h);
+    }
+  }
+  ctx.stroke();
+}
+
+// Forget everything about the person (between test clips, or after switching model).
+function resetTracking() {
+  seenFrames = 0; missFrames = 0; confirmed = false; lastReject = null; lastConfirmedAt = -1e9;
+  lastGood = null; lastHands = []; prevWorld = null; sideRef = null;
+  for (const k of Object.keys(speed)) delete speed[k];
+  smoothLm.reset(); smoothWorld.reset();
+}
+
+// For the test-set evaluator: process one frame synchronously and get the result.
+window.phoneCamTracker = {
+  process: (src, w, h, clock) => processFrame(src, w, h, clock),
+  reset: resetTracking,
+  switchPipeline,
+  get pipeline() { return pipe?.choice; },
+  get ready() { return !!pipe; },
+  get opts() { return { ...opts }; },
+  // set toggles without auto-switching the model (the evaluator picks the model itself)
+  setOpts(o) { const prev = { ...opts }; Object.assign(opts, o); syncBoxes(); showState(); return prev; },
+};
+
+function jointAngles(lm, world) {
+  const angles = {};
+  for (const [label, a, b, c] of JOINTS) {
+    angles[label] = Math.min(lm[a].visibility, lm[b].visibility, lm[c].visibility) >= VIS
+      ? angle3(world[a], world[b], world[c]) : null;
+  }
+  return angles;
 }
 
 // ---------- side panel ----------
@@ -344,27 +705,62 @@ function renderPanel(out) {
     return `<div class="bar"><span>${name}</span><div><i style="width:${pct}%"></i></div><b>${v.toFixed(2)}</b></div>`;
   }).join('');
 
-  const hd = p?.head;
-  setText('head', hd ? `Facing ${hd.turn} · nod ${hd.nod} · tilt ${hd.tilt}°` : 'Head not visible');
-  setText('handsInfo', out.hands.length
-    ? out.hands.map((x) => `${x.handedness ?? 'Hand'}: ${x.fingersUp} finger${x.fingersUp === 1 ? '' : 's'} up`).join(' · ')
-    : 'No hands');
-  setText('bodyState', p ? 'Body tracked'
+  setText('bodyState', p ? (p.predicted ? 'Body tracked (bridging a gap)' : 'Body tracked')
     : lastReject && lastReject !== 'nobody' ? `No person (ignored a false match: ${lastReject})`
     : 'No body detected');
 }
 
-// ---------- frame loop: fetch each new frame once ----------
-let after = 0;
+// ---------- frame loop ----------
+// Video sources (WebRTC / screen / file) are processed once per new video frame;
+// otherwise we fall back to the phone's JPEG pictures, each fetched once.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function nextVideoFrame(v) {
+  return new Promise((resolve) => {
+    let done = false;
+    const fin = () => { if (!done) { done = true; resolve(); } };
+    if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(fin);
+    setTimeout(fin, 200);                      // paused video: re-check now and then
+  });
+}
+
+// Model choice: "auto" always uses Holistic. On the test set it beat the separate
+// body model (87% vs 57% on posture/facing/head), mostly because the separate model
+// loses seated and side-on people. The boxes then only choose what is shown and
+// described; the other models stay available in the menu for comparison.
+const modelSel = document.getElementById('opt-model');
+function wantedChoice() {
+  const v = modelSel?.value || 'auto';
+  return v === 'auto' ? 'holistic' : v;
+}
+function autoPipeline() {
+  const c = wantedChoice();
+  if (!pipe || pipe.choice !== c) switchPipeline(c);
+  else showState();
+  resetTracking();
+  window.brain?.reset();
+}
+await switchPipeline(wantedChoice());
+if (!pipe) throw new Error('MediaPipe failed to load');
+if (modelSel) modelSel.onchange = autoPipeline;
+
+let after = 0;
 for (;;) {
+  const v = window.camSource?.activeVideo();
+  if (v) {
+    await nextVideoFrame(v);
+    if (window.camSource.activeVideo() === v && v.videoWidth) {
+      try { processFrame(v, v.videoWidth, v.videoHeight); } catch (e) { console.warn('frame failed', e); }
+    }
+    continue;
+  }
+  if (window.camSource && !window.camSource.wantsPictures()) { await sleep(100); continue; }
   let res;
-  try { res = await fetch(`/next.jpg?after=${after}`); } catch { await sleep(1000); continue; }
-  if (res.status !== 200) continue;            // 204 = timed out waiting, ask again
+  try { res = await fetch(`/next.jpg?after=${after}&wait=500`); } catch { await sleep(1000); continue; }
+  if (res.status !== 200) continue;            // 204 = nothing new yet; check sources again
   after = Number(res.headers.get('X-Frame'));
   try {
     const bmp = await createImageBitmap(await res.blob());
-    processFrame(bmp);
+    processFrame(bmp, bmp.width, bmp.height);
     bmp.close();
   } catch (e) { console.warn('frame failed', e); }
 }

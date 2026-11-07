@@ -11,7 +11,9 @@
   button, select { font-size: 18px; padding: 12px 18px; border-radius: 10px; border: 0; }
   #start { background: #2e7d32; color: #fff; }
   #start.on { background: #c62828; }
-  #status { padding: 8px; opacity: .8; }
+  #status { padding: 8px; opacity: .85; }
+  #mode { display: inline-block; padding: 2px 10px; border-radius: 999px; background: #333; font-size: 14px; }
+  #mode.rtc { background: #1b5e20; }
 </style>
 </head>
 <body>
@@ -25,52 +27,155 @@
       <option value="1080">1080p</option>
     </select>
   </div>
+  <div><span id="mode">idle</span></div>
   <div id="status">Not streaming</div>
 
 <script>
+// Two ways to get video to the PC:
+//  1. WebRTC (preferred): real 30 fps video using the phone's hardware encoder.
+//  2. JPEG uploads (fallback): used until WebRTC connects, or if it can't.
 const video = document.getElementById('video');
 const startBtn = document.getElementById('start');
 const statusEl = document.getElementById('status');
+const modeEl = document.getElementById('mode');
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let stream = null;
 let facing = 'environment';
 let running = false;
-let sent = 0, t0 = performance.now();
+let pc = null, sender = null, rtcLive = false;
 
-async function openCamera() {
-  if (stream) stream.getTracks().forEach(t => t.stop());
-  const h = Number(document.getElementById('quality').value);
-  stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: facing, height: { ideal: h } },
-    audio: false,
-  });
-  video.srcObject = stream;
-  await video.play();
+function setMode(m) {
+  modeEl.textContent = m === 'rtc' ? 'WebRTC video' : m === 'jpeg' ? 'picture mode (connecting video…)' : m;
+  modeEl.className = m === 'rtc' ? 'rtc' : '';
 }
 
-async function loop() {
+async function openCamera() {
+  const old = stream;
+  const h = Number(document.getElementById('quality').value);
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: facing, height: { ideal: h }, frameRate: { ideal: 30 } },
+    audio: false,
+  });
+  const track = stream.getVideoTracks()[0];
+  track.contentHint = 'motion';               // favour smooth motion over sharp still detail
+  video.srcObject = stream;
+  await video.play();
+  if (sender) await sender.replaceTrack(track).catch(() => {});
+  if (old) old.getTracks().forEach((t) => t.stop());
+}
+
+// ---------------- WebRTC ----------------
+function iceComplete(conn, ms) {
+  if (conn.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => { if (conn.iceGatheringState === 'complete') { conn.removeEventListener('icegatheringstatechange', done); resolve(); } };
+    conn.addEventListener('icegatheringstatechange', done);
+    setTimeout(resolve, ms);                    // on a LAN the host candidates come almost at once
+  });
+}
+function waitConnected(conn, ms) {
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      if (conn.connectionState === 'connected') resolve();
+      else if (['failed', 'closed'].includes(conn.connectionState)) reject(new Error(conn.connectionState));
+    };
+    conn.addEventListener('connectionstatechange', check);
+    check();
+    setTimeout(() => reject(new Error('timed out connecting')), ms);
+  });
+}
+function closeRtc() {
+  rtcLive = false;
+  if (pc) { try { pc.close(); } catch {} }
+  pc = null; sender = null;
+}
+
+async function rtcConnect() {
+  pc = new RTCPeerConnection({ iceServers: [] });   // same Wi-Fi: no STUN/TURN needed
+  sender = pc.addTrack(stream.getVideoTracks()[0], stream);
+  pc.addEventListener('connectionstatechange', () => {
+    if (['failed', 'disconnected', 'closed'].includes(pc?.connectionState)) {
+      closeRtc();
+      setMode('jpeg');
+    }
+  });
+  await pc.setLocalDescription(await pc.createOffer());
+  await iceComplete(pc, 2000);
+  const { id } = await (await fetch('/rtc/offer', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: pc.localDescription.type, sdp: pc.localDescription.sdp }),
+  })).json();
+
+  statusEl.textContent = 'Waiting for the PC viewer to answer…';
+  let answer = null;
+  for (let i = 0; i < 2 && !answer && running; i++) {     // two 15 s long-polls
+    const r = await fetch(`/rtc/answer?id=${encodeURIComponent(id)}`);
+    if (r.status === 200) answer = await r.json();
+  }
+  if (!answer) throw new Error('no PC viewer answered');
+  await pc.setRemoteDescription(answer);
+  await waitConnected(pc, 8000);
+
+  // Ask for a high bitrate and keep the frame rate up when the network is tight.
+  const p = sender.getParameters();
+  if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+  p.encodings[0].maxBitrate = 4_000_000;
+  p.encodings[0].maxFramerate = 30;
+  p.degradationPreference = 'maintain-framerate';
+  await sender.setParameters(p).catch(() => {});
+  rtcLive = true;
+  setMode('rtc');
+}
+
+async function rtcLoop() {
   while (running) {
-    if (video.videoWidth) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0);
-      const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.7));
-      try {
-        await fetch('/frame', { method: 'POST', body: blob, headers: { 'Content-Type': 'image/jpeg' } });
-        sent++;
-      } catch (e) {
-        statusEl.textContent = 'Upload failed: ' + e.message;
-        await new Promise(r => setTimeout(r, 500));
-      }
-      const dt = (performance.now() - t0) / 1000;
-      if (dt > 1) {
-        statusEl.textContent = `Streaming ${canvas.width}x${canvas.height} @ ${(sent / dt).toFixed(1)} fps`;
-        sent = 0; t0 = performance.now();
-      }
+    if (!rtcLive) {
+      try { await rtcConnect(); }
+      catch (e) { closeRtc(); setMode('jpeg'); statusEl.textContent = `Video not connected (${e.message}); retrying…`; await sleep(3000); }
     } else {
-      await new Promise(r => setTimeout(r, 50));
+      await sleep(1000);
+      await showRtcStats();
+    }
+  }
+  closeRtc();
+}
+
+let lastStats = null;
+async function showRtcStats() {
+  if (!pc) return;
+  const stats = await pc.getStats(sender);
+  for (const s of stats.values()) {
+    if (s.type !== 'outbound-rtp' || s.kind !== 'video') continue;
+    let kbps = '';
+    if (lastStats) kbps = ` · ${Math.round((s.bytesSent - lastStats.bytesSent) * 8 / (s.timestamp - lastStats.timestamp))} kbps`;
+    lastStats = s;
+    statusEl.textContent = `Video ${s.frameWidth || '?'}x${s.frameHeight || '?'} @ ${Math.round(s.framesPerSecond || 0)} fps${kbps}`;
+  }
+}
+
+// ---------------- JPEG fallback ----------------
+// Two uploads in flight at once, so we don't sit idle waiting for each reply.
+async function jpegLoop() {
+  let inflight = 0, sent = 0, t0 = performance.now();
+  while (running) {
+    if (rtcLive || !video.videoWidth || inflight >= 2) { await sleep(rtcLive ? 250 : 10); continue; }
+    const scale = Math.min(1, 640 / video.videoWidth);          // small frames upload faster
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.65));
+    inflight++;
+    fetch('/frame', { method: 'POST', body: blob, headers: { 'Content-Type': 'image/jpeg' } })
+      .then(() => { sent++; })
+      .catch((e) => { statusEl.textContent = 'Upload failed: ' + e.message; })
+      .finally(() => { inflight--; });
+    const dt = (performance.now() - t0) / 1000;
+    if (dt > 1 && !rtcLive) {
+      statusEl.textContent = `Pictures ${canvas.width}x${canvas.height} @ ${(sent / dt).toFixed(1)} fps`;
+      sent = 0; t0 = performance.now();
     }
   }
 }
@@ -78,9 +183,11 @@ async function loop() {
 startBtn.onclick = async () => {
   if (running) {
     running = false;
+    closeRtc();
     startBtn.textContent = 'Start streaming';
     startBtn.classList.remove('on');
     statusEl.textContent = 'Stopped';
+    setMode('idle');
     return;
   }
   try {
@@ -88,7 +195,9 @@ startBtn.onclick = async () => {
     running = true;
     startBtn.textContent = 'Stop';
     startBtn.classList.add('on');
-    loop();
+    setMode('jpeg');
+    jpegLoop();
+    rtcLoop();
   } catch (e) {
     statusEl.textContent = 'Camera error: ' + e.message +
       (window.isSecureContext ? '' : ' (page must be opened over https)');
@@ -97,7 +206,7 @@ startBtn.onclick = async () => {
 
 document.getElementById('flip').onclick = async () => {
   facing = facing === 'environment' ? 'user' : 'environment';
-  if (stream) await openCamera().catch(e => statusEl.textContent = e.message);
+  if (stream) await openCamera().catch((e) => statusEl.textContent = e.message);
 };
 document.getElementById('quality').onchange = () => { if (stream) openCamera(); };
 </script>
