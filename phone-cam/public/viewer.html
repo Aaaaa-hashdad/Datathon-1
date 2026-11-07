@@ -141,6 +141,46 @@
       <div id="placeholder">Scan the QR code with your phone to start</div>
     </div>
     <aside>
+
+      <section id="squat-coach">
+        <h3>Exercise coach · prototype</h3>
+        <small>
+          Squats: show hips, knees and ankles. Curls and bench press: show shoulders, elbows and wrists from a side or diagonal view.
+          Scores assess depth and tempo only.
+          Targets are provisional.
+        </small>
+        <label>Exercise <select id="workout-exercise"><option value="squat">Squat</option><option value="bicep_curl">Bicep curl</option><option value="bench_press">Bench press</option></select></label>
+        <label>Anonymous participant code
+          <input id="participant-id" maxlength="40" placeholder="A017 (no names)">
+        </label>
+        <label>Collection location
+          <input id="workout-location" maxlength="80" placeholder="MSC">
+        </label>
+        <label>
+          <input type="checkbox" id="workout-consent">
+          Participant agreed to keypoint collection
+        </label>
+        <button id="workout-start">Start exercise session</button>
+        <button id="workout-stop" disabled>Finish session</button>
+        <div id="workout-status" role="status">Ready to collect workout data.</div>
+        <div id="workout-summary"></div>
+        <div id="workout-reps"></div>
+        <h3>Collected session comparison</h3>
+        <div id="workout-trends"></div>
+        <small>
+          Saved in this browser. Sessions may include repeat participants;
+          this is not a representative campus ranking.
+          Score changes do not establish fatigue.
+        </small>
+        <button id="workout-csv">Export rep CSV</button>
+        <button id="workout-json">Export session JSON</button>
+        <button id="workout-frames">Export latest session keypoints</button>
+        <label>Process collected tracking JSON
+          <input id="workout-import" type="file"
+                 accept=".json,application/json">
+        </label>
+      </section>
+
       <section id="connect">
         <h3>Connect your phone</h3>
         <div id="qr"></div>
@@ -285,5 +325,6 @@ setInterval(async () => {
 <script type="module" src="/eval.js"></script>
 <script type="module" src="/mcp-bridge.js"></script>
 <script type="module" src="/tracker.js"></script>
+<script type="module" src="/workout.mjs"></script>
 </body>
 </html>
