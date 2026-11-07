@@ -61,14 +61,14 @@ window.REVGYM_MOCK = (function () {
 
   // Default tip per metric. `tipsByExercise` below overrides where the advice differs.
   const tips = {
-    depth:         { title: 'Hit depth on every rep', why: 'Your hip crease stayed above your knee on several reps, so the glutes and adductors did less of the work.', cue: '"Sit between your heels."', drill: 'Pause squats: 3 × 5 with a 2-second hold at the bottom, 60% of your working weight.' },
-    backAngle:     { title: 'Keep your torso angle steady', why: 'Your chest dropped as the set went on, which shifts load onto the lower back.', cue: '"Proud chest, brace before you move."', drill: 'Tempo reps at 3 seconds down with lighter weight. Film from the side.' },
+    depth:         { title: 'Hit depth on every rep', why: 'Your hip crease stayed above your knee on several reps, so the glutes and adductors did less of the work.', cue: '"Sit between your heels."', drill: 'Pause squats: 3 × 5 with a 2-second hold at the bottom,.' },
+    backAngle:     { title: 'Keep your torso angle steady', why: 'Your chest dropped as the set went on, which shifts load onto the lower back.', cue: '"Proud chest, brace before you move."', drill: 'Tempo reps at 3 seconds down. Film from the side.' },
     kneeTracking:  { title: 'Push your knees out over your toes', why: 'Your knees drifted inward coming out of the bottom (valgus), mostly on the last reps.', cue: '"Spread the floor."', drill: 'Banded goblet squats: 2 × 10 with a mini-band above the knees.' },
     barPath:       { title: 'Keep the bar over mid-foot', why: 'The bar drifted forward of mid-foot, which costs leverage and tips you forward.', cue: '"Bar stays over the laces."', drill: 'Film side-on and trace the bar. Aim for a near-vertical line.' },
     tempo:         { title: 'Control the way down', why: 'Your lowering phase was under a second on most reps, so you lost tension at the bottom.', cue: '"Two down, one up."', drill: 'Count out loud on your next set: 2 seconds down, a slight pause, then drive.' },
     lockout:       { title: 'Finish every rep', why: 'You started the next rep before reaching full extension.', cue: '"Squeeze at the top."', drill: 'Add a 1-second hold at lockout on your last set.' },
     elbowPath:     { title: 'Keep your elbows on track', why: 'Your elbows flared or drifted away from the ideal path, which loads the shoulder.', cue: '"Elbows at 45°, bend the bar."', drill: 'Light paused reps focusing only on elbow position.' },
-    rangeOfMotion: { title: 'Use the full range', why: 'Some reps stopped short of the full range, so they count for less.', cue: '"All the way down, all the way up."', drill: 'Drop the weight 10% and own every inch of the rep.' },
+    rangeOfMotion: { title: 'Use the full range', why: 'Some reps stopped short of the full range, so they count for less.', cue: '"All the way down, all the way up."', drill: 'Slow down and own every inch of the rep.' },
     bodySwing:     { title: 'Stop swinging', why: 'Momentum from your hips did part of the work on the later reps.', cue: '"Glutes tight, ribs down."', drill: 'Do strict reps with your back against a wall or post.' },
     hipHinge:      { title: 'Lead with the hips', why: 'Your hips rose before the bar left the floor, turning it into a stiff-leg pull.', cue: '"Push the floor away, chest and hips rise together."', drill: 'Paused deadlifts 1 inch off the floor: 3 × 3.' },
   };
@@ -236,25 +236,18 @@ window.REVGYM_MOCK = (function () {
     browserNotifications: false,
   };
 
-  /* ---------- Profile: history, PBs, trend ---------- */
+  /* ---------- Profile: history, trend ---------- */
   const history = [
-    { id: 'h1', daysAgo: 2,  exercise: 'pullup',   score: 90, reps: 8,  weight: 0,   unit: 'BW' },
-    { id: 'h2', daysAgo: 2,  exercise: 'row',      score: 78, reps: 8,  weight: 155, unit: 'lb' },
-    { id: 'h3', daysAgo: 4,  exercise: 'bench',    score: 84, reps: 5,  weight: 185, unit: 'lb' },
-    { id: 'h4', daysAgo: 4,  exercise: 'ohp',      score: 76, reps: 6,  weight: 105, unit: 'lb' },
-    { id: 'h5', daysAgo: 5,  exercise: 'squat',    score: 86, reps: 5,  weight: 245, unit: 'lb' },
-    { id: 'h6', daysAgo: 5,  exercise: 'rdl',      score: 81, reps: 8,  weight: 185, unit: 'lb' },
-    { id: 'h7', daysAgo: 8,  exercise: 'deadlift', score: 83, reps: 3,  weight: 315, unit: 'lb' },
-    { id: 'h8', daysAgo: 9,  exercise: 'curl',     score: 92, reps: 10, weight: 75,  unit: 'lb' },
+    { id: 'h1', daysAgo: 2,  exercise: 'pullup',   score: 90, reps: 8 },
+    { id: 'h2', daysAgo: 2,  exercise: 'row',      score: 78, reps: 8 },
+    { id: 'h3', daysAgo: 4,  exercise: 'bench',    score: 84, reps: 5 },
+    { id: 'h4', daysAgo: 4,  exercise: 'ohp',      score: 76, reps: 6 },
+    { id: 'h5', daysAgo: 5,  exercise: 'squat',    score: 86, reps: 5 },
+    { id: 'h6', daysAgo: 5,  exercise: 'rdl',      score: 81, reps: 8 },
+    { id: 'h7', daysAgo: 8,  exercise: 'deadlift', score: 83, reps: 3 },
+    { id: 'h8', daysAgo: 9,  exercise: 'curl',     score: 92, reps: 10 },
   ];
 
-  const personalBests = [
-    { exercise: 'squat',    weight: 255, unit: 'lb', reps: 3, bestForm: 88, daysAgo: 19 },
-    { exercise: 'bench',    weight: 195, unit: 'lb', reps: 2, bestForm: 84, daysAgo: 4 },
-    { exercise: 'deadlift', weight: 335, unit: 'lb', reps: 1, bestForm: 86, daysAgo: 33 },
-    { exercise: 'ohp',      weight: 115, unit: 'lb', reps: 3, bestForm: 79, daysAgo: 26 },
-    { exercise: 'pullup',   weight: 25,  unit: 'lb +BW', reps: 5, bestForm: 90, daysAgo: 2 },
-  ];
 
   // Weekly average form score, oldest first (12 weeks).
   const formTrend = {
@@ -271,6 +264,6 @@ window.REVGYM_MOCK = (function () {
     currentUser, exercises, metrics, tips, tipsByExercise, locations, focuses,
     appStats, users, participants, formLeaderboards, consistencyLeaderboard, pointsRule,
     plannedSessions, notifications, notificationSettings,
-    history, personalBests, formTrend, trainedDaysAgo,
+    history, formTrend, trainedDaysAgo,
   };
 })();
