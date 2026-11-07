@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Who Would Answer Here?</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="hero">
+    <p class="eyebrow">TAMU Datathon · Build-A-Dataset</p>
+    <h1>Who would answer <em>"Here"</em> for you?</h1>
+    <p class="sub">At Muster, when an Aggie's name is called, someone answers "Here." We walked across campus and asked
+      <strong id="n-count">0</strong> Aggies how many people would answer for them, and what kept them here when it got hard.</p>
+    <div id="sample-banner" class="banner" hidden>Showing SAMPLE data. Load your real survey below.</div>
+  </header>
+
+  <main>
+    <!-- 1. THE FORM -->
+    <section class="card" id="form-card">
+      <h2>1 · Your answers</h2>
+      <p class="muted">Anonymous. Nothing leaves your browser.</p>
+      <form id="you">
+        <label>Year
+          <select name="year"><option>Freshman</option><option>Sophomore</option><option>Junior</option><option>Senior</option><option>Grad</option></select>
+        </label>
+        <label>Transfer student?
+          <select name="transfer"><option>No</option><option>Yes</option></select>
+        </label>
+        <label>First-gen student?
+          <select name="first_gen"><option>No</option><option>Yes</option></select>
+        </label>
+        <label>From Texas?
+          <select name="texas"><option>Yes</option><option>No</option></select>
+        </label>
+        <label class="wide">How many people at A&amp;M would answer "Here" for you?
+          <input type="range" name="here_count" min="0" max="5" value="2">
+          <span class="range-val" id="here-val">2</span>
+        </label>
+        <label>Belonging (1–5)
+          <input type="number" name="belonging" min="1" max="5" value="3">
+        </label>
+        <label>Hardest part of A&amp;M
+          <select name="hardest"><option>Loneliness</option><option>Grades</option><option>Money</option><option>Family</option><option>Health</option><option>Homesickness</option><option>None</option></select>
+        </label>
+        <button type="submit">Light my candle 🕯️</button>
+      </form>
+    </section>
+
+    <!-- 2. RECOMMENDATIONS -->
+    <section class="card" id="result" hidden>
+      <h2>2 · What Aggies like you found</h2>
+      <p id="percentile" class="big"></p>
+      <div class="grid2">
+        <div>
+          <h3>Where they found their people</h3>
+          <p class="muted" id="met-note"></p>
+          <ol id="met-list" class="bars"></ol>
+        </div>
+        <div>
+          <h3>What kept them here</h3>
+          <p class="muted" id="kept-note"></p>
+          <ol id="kept-list" class="bars"></ol>
+        </div>
+      </div>
+      <p class="callout" id="message"></p>
+      <p class="help">Struggling? Texas A&amp;M Counseling &amp; Psychological Services (CAPS) is free for students: <strong>979-845-4427</strong> (24/7 helpline).</p>
+    </section>
+
+    <!-- 3. CANDLE WALL -->
+    <section class="card">
+      <h2>3 · The Muster wall</h2>
+      <p class="muted">One candle per Aggie we surveyed. Brighter = more people would answer "Here" for them.</p>
+      <div class="filters" id="filters">
+        <button data-f="all" class="on">Everyone</button>
+        <button data-f="transfer">Transfers</button>
+        <button data-f="first_gen">First-gen</button>
+        <button data-f="out">Not from Texas</button>
+        <button data-f="Freshman">Freshmen</button>
+        <button data-f="Senior">Seniors</button>
+      </div>
+      <p id="wall-stat" class="stat"></p>
+      <div id="wall" class="wall"></div>
+    </section>
+
+    <!-- 4. CHARTS -->
+    <section class="card">
+      <h2>4 · The data</h2>
+      <div class="grid2">
+        <div><h3>How many would answer "Here"?</h3><canvas id="c-here"></canvas></div>
+        <div><h3>More people → more belonging?</h3><canvas id="c-belong"></canvas></div>
+        <div><h3>Answered "0 or 1", by group</h3><canvas id="c-groups"></canvas></div>
+        <div><h3>What kept Aggies here</h3><canvas id="c-kept"></canvas></div>
+      </div>
+    </section>
+
+    <!-- 5. LOAD DATA -->
+    <section class="card">
+      <h2>5 · Load survey data</h2>
+      <p class="muted">Paste a Google Sheet "Publish to web → CSV" link (refreshes every 30 s), or upload a CSV export.</p>
+      <div class="loader">
+        <input id="sheet-url" type="url" placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv">
+        <button id="load-url">Load link</button>
+        <input id="file" type="file" accept=".csv">
+      </div>
+      <p id="load-status" class="muted"></p>
+    </section>
+  </main>
+
+  <footer>Data collected in person by our team across Texas A&amp;M campus · Anonymous · Gig 'em 👍</footer>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phone Camera</title>
+<style>
+  body { margin: 0; background: #111; color: #eee; font-family: system-ui, sans-serif; text-align: center; }
+  video { width: 100%; max-height: 70vh; background: #000; }
+  .row { display: flex; gap: 8px; justify-content: center; padding: 12px; flex-wrap: wrap; }
+  button, select { font-size: 18px; padding: 12px 18px; border-radius: 10px; border: 0; }
+  #start { background: #2e7d32; color: #fff; }
+  #start.on { background: #c62828; }
+  #status { padding: 8px; opacity: .8; }
+</style>
+</head>
+<body>
+  <video id="video" autoplay playsinline muted></video>
+  <div class="row">
+    <button id="start">Start streaming</button>
+    <button id="flip">Flip camera</button>
+    <select id="quality">
+      <option value="480">480p</option>
+      <option value="720" selected>720p</option>
+      <option value="1080">1080p</option>
+    </select>
+  </div>
+  <div id="status">Not streaming</div>
+
+<script>
+const video = document.getElementById('video');
+const startBtn = document.getElementById('start');
+const statusEl = document.getElementById('status');
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
+
+let stream = null;
+let facing = 'environment';
+let running = false;
+let sent = 0, t0 = performance.now();
+
+async function openCamera() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  const h = Number(document.getElementById('quality').value);
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: facing, height: { ideal: h } },
+    audio: false,
+  });
+  video.srcObject = stream;
+  await video.play();
+}
+
+async function loop() {
+  while (running) {
+    if (video.videoWidth) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+      const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.7));
+      try {
+        await fetch('/frame', { method: 'POST', body: blob, headers: { 'Content-Type': 'image/jpeg' } });
+        sent++;
+      } catch (e) {
+        statusEl.textContent = 'Upload failed: ' + e.message;
+        await new Promise(r => setTimeout(r, 500));
+      }
+      const dt = (performance.now() - t0) / 1000;
+      if (dt > 1) {
+        statusEl.textContent = `Streaming ${canvas.width}x${canvas.height} @ ${(sent / dt).toFixed(1)} fps`;
+        sent = 0; t0 = performance.now();
+      }
+    } else {
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
+}
+
+startBtn.onclick = async () => {
+  if (running) {
+    running = false;
+    startBtn.textContent = 'Start streaming';
+    startBtn.classList.remove('on');
+    statusEl.textContent = 'Stopped';
+    return;
+  }
+  try {
+    if (!stream) await openCamera();
+    running = true;
+    startBtn.textContent = 'Stop';
+    startBtn.classList.add('on');
+    loop();
+  } catch (e) {
+    statusEl.textContent = 'Camera error: ' + e.message +
+      (window.isSecureContext ? '' : ' (page must be opened over https)');
+  }
+};
+
+document.getElementById('flip').onclick = async () => {
+  facing = facing === 'environment' ? 'user' : 'environment';
+  if (stream) await openCamera().catch(e => statusEl.textContent = e.message);
+};
+document.getElementById('quality').onchange = () => { if (stream) openCamera(); };
+</script>
+</body>
+</html>

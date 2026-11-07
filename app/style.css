@@ -1,0 +1,75 @@
+:root {
+  --maroon: #500000;
+  --maroon-2: #732f2f;
+  --bg: #1a0d0d;
+  --card: #261414;
+  --text: #f5ece4;
+  --muted: #bfa9a0;
+  --gold: #ffcf6b;
+  --line: #3d2323;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.hero {
+  background: radial-gradient(ellipse at top, var(--maroon-2), var(--maroon) 60%, var(--bg));
+  padding: 56px 16px 40px; text-align: center;
+}
+.hero h1 { font-size: clamp(28px, 6vw, 52px); margin: 8px 0; font-family: Georgia, serif; }
+.hero em { color: var(--gold); font-style: normal; }
+.eyebrow { letter-spacing: .15em; text-transform: uppercase; font-size: 12px; color: var(--muted); margin: 0; }
+.sub { max-width: 640px; margin: 0 auto; color: #e8d9cf; }
+.banner { display: inline-block; margin-top: 16px; background: #6b4b00; color: #fff3cf; padding: 6px 14px; border-radius: 999px; font-size: 14px; }
+main { max-width: 1000px; margin: 0 auto; padding: 24px 16px; display: grid; gap: 20px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 24px; }
+h2 { margin: 0 0 4px; font-family: Georgia, serif; }
+h3 { margin: 16px 0 6px; font-size: 16px; }
+.muted { color: var(--muted); margin: 0 0 12px; font-size: 14px; }
+form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-top: 12px; }
+label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
+label.wide { grid-column: 1 / -1; }
+select, input[type=number], input[type=url] {
+  background: #1a0d0d; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px; font-size: 15px;
+}
+input[type=range] { accent-color: var(--gold); }
+.range-val { font-size: 28px; color: var(--gold); font-weight: 700; }
+button {
+  background: var(--maroon); color: var(--text); border: 1px solid var(--maroon-2);
+  border-radius: 10px; padding: 10px 16px; font-size: 15px; cursor: pointer;
+}
+button:hover { background: var(--maroon-2); }
+form button { grid-column: 1 / -1; font-size: 17px; padding: 14px; background: var(--gold); color: #3a1500; border: 0; font-weight: 700; }
+.big { font-size: 22px; font-family: Georgia, serif; }
+.big b { color: var(--gold); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+.bars { list-style: none; padding: 0; margin: 0; }
+.bars li { margin: 8px 0; }
+.bars .row { display: flex; justify-content: space-between; font-size: 14px; }
+.bars .track { height: 10px; background: #1a0d0d; border-radius: 6px; overflow: hidden; margin-top: 3px; }
+.bars .fill { height: 100%; background: linear-gradient(90deg, var(--maroon-2), var(--gold)); }
+.callout { border-left: 4px solid var(--gold); padding: 10px 14px; background: #1f1010; border-radius: 6px; margin-top: 18px; }
+.help { font-size: 13px; color: var(--muted); }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.filters button { padding: 6px 12px; font-size: 13px; background: transparent; }
+.filters button.on { background: var(--maroon); border-color: var(--gold); }
+.stat { font-size: 15px; }
+.stat b { color: var(--gold); }
+.wall { display: flex; flex-wrap: wrap; gap: 6px; padding: 16px; background: #0f0707; border-radius: 12px; min-height: 120px; }
+.candle { width: 22px; display: flex; flex-direction: column; align-items: center; transition: opacity .4s; }
+.candle .flame {
+  width: 10px; height: 16px; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+  background: radial-gradient(circle at 50% 70%, #fff6d0, var(--gold) 45%, #ff7b00 80%);
+  box-shadow: 0 0 10px 3px rgba(255, 190, 80, .5); animation: flicker 2.4s infinite alternate;
+}
+.candle .wax { width: 10px; height: 22px; background: #efe4d2; border-radius: 2px; margin-top: 2px; }
+.candle.dim { opacity: .18; }
+.candle.out .flame { background: #333; box-shadow: none; animation: none; }
+.candle.you .wax { background: var(--gold); }
+.candle.you .flame { box-shadow: 0 0 18px 7px rgba(255, 207, 107, .9); }
+@keyframes flicker { from { transform: scale(1) rotate(-2deg); } to { transform: scale(.88) rotate(2deg); } }
+.loader { display: flex; flex-wrap: wrap; gap: 10px; }
+.loader input[type=url] { flex: 1 1 320px; }
+canvas { max-height: 260px; }
+footer { text-align: center; color: var(--muted); font-size: 13px; padding: 24px 16px 40px; }

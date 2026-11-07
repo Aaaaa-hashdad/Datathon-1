@@ -1,0 +1,160 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phone Camera</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; background: #111; color: #eee; font-family: system-ui, sans-serif;
+         display: flex; flex-direction: column; }
+  header { padding: 10px 16px; display: flex; gap: 16px; align-items: center; border-bottom: 1px solid #222; flex-wrap: wrap; }
+  header .spacer { flex: 1; }
+  .muted { color: #999; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #c62828; display: inline-block; }
+  .dot.on { background: #43a047; }
+  button { background: #2a2a2a; color: #eee; border: 1px solid #444; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #feedWrap { flex: 1; display: flex; align-items: center; justify-content: center; min-width: 0; background: #000; }
+  #stage { max-width: 100%; max-height: 100%; }
+  #placeholder { color: #777; }
+  aside { width: 320px; padding: 16px; border-left: 1px solid #222; overflow-y: auto;
+          display: flex; flex-direction: column; gap: 14px; }
+  section { display: flex; flex-direction: column; gap: 8px; }
+  section h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: #aaa; }
+  #connect { align-items: center; text-align: center; }
+  #connect.hidden { display: none; }
+  #qr { background: #fff; border-radius: 12px; padding: 8px; width: 240px; height: 240px; }
+  #qr img { width: 100%; height: 100%; display: block; }
+  select { width: 100%; background: #222; color: #eee; border: 1px solid #444; border-radius: 8px; padding: 6px; }
+  code { font-size: 12px; word-break: break-all; color: #9cf; }
+  small { color: #999; line-height: 1.4; }
+  .toggles { display: flex; gap: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 3px 0; border-bottom: 1px solid #222; }
+  td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  .bar { display: grid; grid-template-columns: 60px 1fr 40px; gap: 8px; align-items: center; font-size: 13px; }
+  .bar div { height: 8px; background: #222; border-radius: 4px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, #43a047, #fdd835, #e53935); }
+  .bar b { font-weight: normal; text-align: right; font-variant-numeric: tabular-nums; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; }
+  .legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+                         margin-right: 4px; vertical-align: -1px; background: var(--c); }
+  @media (max-width: 800px) {
+    main { flex-direction: column-reverse; overflow: auto; }
+    aside { width: 100%; border-left: 0; border-bottom: 1px solid #222; }
+    #feedWrap { min-height: 50vh; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <span><span id="dot" class="dot"></span> <span id="state">Waiting for phone…</span></span>
+    <span id="fps" class="muted"></span>
+    <span id="trackState" class="muted"></span>
+    <span id="trackFps" class="muted"></span>
+    <span class="spacer"></span>
+    <button id="toggleQr">Hide QR</button>
+  </header>
+  <main>
+    <div id="feedWrap">
+      <canvas id="stage" style="display:none"></canvas>
+      <div id="placeholder">Scan the QR code with your phone to start</div>
+    </div>
+    <aside>
+      <section id="connect">
+        <h3>Connect your phone</h3>
+        <div id="qr"></div>
+        <select id="urls"></select>
+        <code id="url"></code>
+        <small>Same Wi-Fi as this PC. On the certificate warning tap
+          <b>Advanced → Proceed</b>, then <b>Start streaming</b>.</small>
+      </section>
+
+      <section>
+        <h3>Tracking</h3>
+        <div class="toggles">
+          <label><input type="checkbox" id="opt-body"> Body</label>
+          <label><input type="checkbox" id="opt-hands"> Hands</label>
+          <label><input type="checkbox" id="opt-video"> Video</label>
+        </div>
+        <select id="opt-model">
+          <option value="heavy" selected>Body model: Accurate (heavy)</option>
+          <option value="full">Body model: Fast (full)</option>
+        </select>
+        <div class="legend">
+          <span style="--c:#ffd54f">Head</span><span style="--c:#4fc3f7">L arm</span>
+          <span style="--c:#f06292">R arm</span><span style="--c:#81c784">L leg</span>
+          <span style="--c:#ffb74d">R leg</span><span style="--c:#ba68c8">Hands</span>
+        </div>
+        <div id="bodyState" class="muted">No body detected</div>
+      </section>
+
+      <section>
+        <h3>Head</h3>
+        <div id="head" class="muted">Head not visible</div>
+      </section>
+
+      <section>
+        <h3>Hands</h3>
+        <div id="handsInfo" class="muted">No hands</div>
+      </section>
+
+      <section>
+        <h3>Joint angles</h3>
+        <table id="angles"></table>
+      </section>
+
+      <section>
+        <h3>Movement speed (m/s)</h3>
+        <div id="motion"></div>
+      </section>
+    </aside>
+  </main>
+
+<script>
+const urlsSel = document.getElementById('urls');
+const connect = document.getElementById('connect');
+const qrBtn = document.getElementById('toggleQr');
+
+function showQr(u) {
+  document.getElementById('qr').innerHTML = `<img alt="QR code" src="/qr.svg?url=${encodeURIComponent(u)}">`;
+  document.getElementById('url').textContent = u;
+}
+function setQrVisible(v) {
+  connect.classList.toggle('hidden', !v);
+  qrBtn.textContent = v ? 'Hide QR' : 'Show QR';
+}
+
+fetch('/info').then(r => r.json()).then(({ phoneUrls }) => {
+  if (!phoneUrls.length) {
+    document.getElementById('url').textContent = 'No network found — connect this PC to Wi-Fi and restart.';
+    return;
+  }
+  urlsSel.innerHTML = phoneUrls.map(u => `<option>${u}</option>`).join('');
+  urlsSel.style.display = phoneUrls.length > 1 ? '' : 'none';
+  urlsSel.onchange = () => showQr(urlsSel.value);
+  showQr(phoneUrls[0]);
+});
+
+qrBtn.onclick = () => setQrVisible(connect.classList.contains('hidden'));
+
+let seen = false;
+setInterval(async () => {
+  try {
+    const s = await (await fetch('/status')).json();
+    document.getElementById('dot').classList.toggle('on', s.connected);
+    document.getElementById('state').textContent = s.connected ? 'Phone connected' : 'Waiting for phone…';
+    document.getElementById('fps').textContent = s.connected ? `${s.fps.toFixed(1)} fps in` : '';
+    if (s.frames > 0 && !seen) {
+      // First frame: show the feed and tuck the QR away to make room.
+      seen = true;
+      document.getElementById('stage').style.display = '';
+      document.getElementById('placeholder').style.display = 'none';
+      setQrVisible(false);
+    }
+  } catch {}
+}, 1000);
+</script>
+<script type="module" src="/tracker.js"></script>
+</body>
+</html>
