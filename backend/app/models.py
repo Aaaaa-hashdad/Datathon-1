@@ -1,8 +1,8 @@
 """Database tables: users, scanned sets, and the reps inside each set."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -20,6 +20,17 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(200), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    # Profile, collected at sign-up (optional for accounts made before it existed).
+    grad_year: Mapped[int | None] = mapped_column(Integer, nullable=True)         # e.g. 2027 -> "Class of '27"
+    major: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    weight_lb: Mapped[float | None] = mapped_column(Float, nullable=True)         # body weight
+    height_in: Mapped[float | None] = mapped_column(Float, nullable=True)         # total inches (5 ft 10 in = 70)
+    gender: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Shown in the team's UI; can be set later with PATCH /me/profile.
+    display_name: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    home_gym: Mapped[str | None] = mapped_column(String(16), nullable=True)       # rec / polo / other
+    weekly_goal: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     sets: Mapped[list["ScanSet"]] = relationship(back_populates="user")
 
@@ -48,7 +59,7 @@ class PairCode(Base):
 
 
 class Device(Base):
-    """A phone linked to a user's account. It can only upload recordings."""
+    """A phone linked to a user's account. It's only the live camera; no video is stored."""
 
     __tablename__ = "devices"
 
@@ -62,27 +73,8 @@ class Device(Base):
     user: Mapped[User] = relationship()
 
 
-class Recording(Base):
-    """A video recorded on a linked phone and synced to the PC."""
-
-    __tablename__ = "recordings"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id", ondelete="SET NULL"), nullable=True)
-    exercise: Mapped[str] = mapped_column(String(32), nullable=False)
-    stored_name: Mapped[str] = mapped_column(String(80), nullable=False)
-    content_type: Mapped[str] = mapped_column(String(80), nullable=False)
-    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
-    # "uploaded" now; the pose-analysis step will move it to "analyzed".
-    status: Mapped[str] = mapped_column(String(20), default="uploaded", nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
-
-    device: Mapped[Device | None] = relationship()
-
-
 class ScanSet(Base):
-    """One recorded set, as analysed by the phone's pose pipeline."""
+    """One set, as measured by the computer-vision scan (sent to POST /scans)."""
 
     __tablename__ = "scan_sets"
 
@@ -115,7 +107,7 @@ class Rep(Base):
     set_id: Mapped[int] = mapped_column(ForeignKey("scan_sets.id"), nullable=False)
     index: Mapped[int] = mapped_column(Integer, nullable=False)
     form_score: Mapped[float] = mapped_column(Float, nullable=False)
-    # Joint angles in degrees measured at the key position, e.g. {"elbow_tuck": 62}.
+    # Joint angles in degrees measured at the key position, e.g. {"knee_angle_min": 92}.
     angles: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     scan_set: Mapped[ScanSet] = relationship(back_populates="reps")

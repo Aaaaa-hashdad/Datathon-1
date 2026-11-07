@@ -34,6 +34,29 @@ def make_engine(database_url: str | None = None):
     return create_engine(url, pool_pre_ping=True, connect_args={"prepare_threshold": None})
 
 
+def add_missing_columns(engine) -> list[str]:
+    """create_all() makes new tables but never changes existing ones.
+
+    Add any new *optional* columns to tables that already exist (for example the
+    users table in Supabase). Never drops or changes anything.
+    """
+    insp = inspect(engine)
+    existing_tables = set(insp.get_table_names())
+    added = []
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue
+            have = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in have or not col.nullable:
+                    continue
+                coltype = col.type.compile(dialect=engine.dialect)
+                conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {coltype}'))
+                added.append(f"{table.name}.{col.name}")
+    return added
+
+
 def secure_supabase_tables(engine) -> None:
     """Supabase exposes public tables through its REST API using the public anon key.
 

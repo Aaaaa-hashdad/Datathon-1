@@ -2,8 +2,6 @@ import os
 
 # Keep the module-level app (built on import) local and in memory during tests.
 os.environ["DATABASE_URL"] = "sqlite://"
-os.environ["SUPABASE_URL"] = ""
-os.environ["SUPABASE_SERVICE_ROLE_KEY"] = ""
 
 from dataclasses import dataclass
 
@@ -14,12 +12,26 @@ from app.config import Settings
 from app.main import create_app
 
 PASSWORD = "correct-horse-1"
+# The profile sign-up requires.
+PROFILE = {"grad_year": 2027, "major": "Kinesiology", "weight_lb": 175, "height_in": 70,
+           "gender": "prefer_not_to_say", "birth_date": "2005-04-12"}
+
+
+def signup(username: str, password: str = PASSWORD, **changes) -> dict:
+    """A complete sign-up body."""
+    return {"username": username, "password": password, **PROFILE, **changes}
 
 
 def local_settings(tmp_path) -> Settings:
     # Always local in tests, even if backend/.env points at Supabase.
-    return Settings(database_url="sqlite://", supabase_url="", supabase_service_key="",
-                    upload_dir=tmp_path / "uploads", secret_key="test-secret", phone_https_port=8443)
+    # A tiny stand-in for the team's ui/ folder (the real one is never modified).
+    ui = tmp_path / "ui"
+    (ui / "assets").mkdir(parents=True, exist_ok=True)
+    (ui / "index.html").write_text('<div id="app"></div><script src="mock-data.js"></script><script src="app.js"></script>')
+    (ui / "mock-data.js").write_text("window.REVGYM_MOCK = { exercises: [{ id: 'squat' }], users: [{ id: 'fake' }] };")
+    (ui / "app.js").write_text("console.log('ui');")
+    (ui / "assets" / "logo.png").write_bytes(b"png")
+    return Settings(database_url="sqlite://", phone_https_port=8443, ui_dir=ui)
 
 
 @dataclass
@@ -43,7 +55,7 @@ def client(tmp_path):
 @pytest.fixture
 def make_user(client):
     def _make(username: str) -> TestUser:
-        res = client.post("/auth/register", json={"username": username, "password": PASSWORD})
+        res = client.post("/auth/register", json=signup(username))
         assert res.status_code == 201, res.text
         data = res.json()
         return TestUser(data["user"]["id"], username, data["token"])

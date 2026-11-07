@@ -76,6 +76,64 @@
           </span>
           <small id="password-hint" class="hint" hidden>At least 8 characters. Letters, numbers, dots and underscores for the username.</small>
         </label>
+        <!-- Sign up only: saved to your profile in Supabase. Weight, height, gender and birthday stay private. -->
+        <fieldset id="signup-fields" class="signup-fields" hidden>
+          <legend>About you</legend>
+          <div class="su-grid">
+            <label class="field"><span>Graduation year</span>
+              <select id="su-grad" required><option value="">Choose…</option></select>
+            </label>
+            <label class="field"><span>Gender</span>
+              <select id="su-gender" required>
+                <option value="">Choose…</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+                <option value="nonbinary">Non-binary</option>
+                <option value="other">Other</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
+              </select>
+            </label>
+          </div>
+          <label class="field"><span>Major</span>
+            <input id="su-major" list="su-majors" autocomplete="off" maxlength="80" required placeholder="e.g. Kinesiology">
+            <datalist id="su-majors">
+              <option value="Kinesiology"></option><option value="Computer Science"></option>
+              <option value="Mechanical Engineering"></option><option value="Biomedical Sciences"></option>
+              <option value="Biology"></option><option value="Business"></option>
+              <option value="Finance"></option><option value="Nutrition"></option>
+              <option value="Psychology"></option><option value="Animal Science"></option>
+              <option value="Chemical Engineering"></option><option value="Industrial Engineering"></option>
+              <option value="Aerospace Engineering"></option><option value="Petroleum Engineering"></option>
+              <option value="Construction Science"></option><option value="Agricultural Business"></option>
+              <option value="Economics"></option><option value="Communication"></option>
+              <option value="Nursing"></option><option value="Sport Management"></option>
+            </datalist>
+          </label>
+          <div class="su-grid">
+            <div class="field"><span id="su-height-label">Height</span>
+              <div class="su-height" role="group" aria-labelledby="su-height-label">
+                <select id="su-ft" aria-label="Feet" required>
+                  <option value="">ft</option><option value="4">4 ft</option><option value="5">5 ft</option>
+                  <option value="6">6 ft</option><option value="7">7 ft</option>
+                </select>
+                <select id="su-in" aria-label="Inches" required>
+                  <option value="">in</option><option value="0">0 in</option><option value="1">1 in</option><option value="2">2 in</option>
+                  <option value="3">3 in</option><option value="4">4 in</option><option value="5">5 in</option><option value="6">6 in</option>
+                  <option value="7">7 in</option><option value="8">8 in</option><option value="9">9 in</option><option value="10">10 in</option>
+                  <option value="11">11 in</option>
+                </select>
+              </div>
+            </div>
+            <label class="field"><span>Weight (lb)</span>
+              <input id="su-weight" type="number" inputmode="decimal" min="50" max="700" step="0.1" required>
+            </label>
+          </div>
+          <label class="field"><span>Date of birth</span>
+            <input id="su-dob" type="date" required>
+          </label>
+          <small class="hint">Only your graduation year and major are shown to others. Weight, height, gender and birthday stay private.</small>
+        </fieldset>
+
         <p id="auth-error" class="error" role="alert" hidden></p>
         <button type="submit" id="auth-submit" class="primary">Log in</button>
       </form>
@@ -164,41 +222,16 @@
         <p class="muted" id="live-status" aria-live="polite">Connecting to your phone…</p>
         <div class="live-frame">
           <video id="live-video" autoplay playsinline muted aria-label="Live view from your phone's camera"></video>
-          <span id="rec-indicator" class="rec-indicator" hidden>● REC <span id="rec-timer">0:00</span></span>
         </div>
-        <div class="live-controls">
-          <label class="field compact">
-            <span>Lift</span>
-            <select id="live-exercise">
-              <option value="bench_press">Bench Press</option>
-              <option value="squat">Squat</option>
-              <option value="bicep_curl">Bicep Curl</option>
-              <option value="shoulder_press">Shoulder Press</option>
-              <option value="deadlift">Deadlift</option>
-              <option value="lunge">Lunge</option>
-            </select>
-          </label>
-          <button type="button" id="live-record" class="primary record-toggle" disabled>Start recording</button>
-        </div>
+        <p class="muted small-text">Live only: nothing is recorded or saved.</p>
         <p id="live-error" class="error" role="alert" hidden></p>
         <button type="button" id="live-retry" class="secondary" hidden>Reconnect</button>
-      </section>
-
-      <!-- Recordings -->
-      <section class="card" aria-labelledby="rec-title">
-        <h2 id="rec-title">Recordings</h2>
-        <p class="muted">New videos from your phone appear here automatically.</p>
-        <div id="player-wrap" class="player-wrap" hidden>
-          <video id="player" controls playsinline></video>
-          <p id="player-caption" class="muted"></p>
-        </div>
-        <ul id="rec-list" class="rec-list" aria-live="polite"></ul>
-        <p id="rec-empty" class="empty" hidden>No recordings yet. Record a set on your phone.</p>
       </section>
     </aside>
   </main>
 </div>
 
+<script src="/static/signup-fields.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

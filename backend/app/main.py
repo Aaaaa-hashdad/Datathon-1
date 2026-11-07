@@ -1,10 +1,11 @@
 """RevGym: the PC app's server.
 
-The PC is the main app (log in, leaderboard, live phone camera, recordings).
-A phone on the same Wi-Fi scans a QR code to link, then acts as the camera.
+The PC is the main app (sign up / log in, leaderboard, live phone camera).
+A phone on the same Wi-Fi scans a QR code to link, then acts as the live camera.
+No video or files are stored.
 
-Data: Supabase Postgres + Supabase Storage when configured in backend/.env,
-otherwise a local SQLite file and backend/uploads.
+Data: Supabase Postgres when DATABASE_URL is set in backend/.env (accounts,
+profiles, logins, scanned sets), otherwise a local SQLite file.
 
 Run:   python run.py   (PC on http://127.0.0.1:8000, phone page on HTTPS :8443)
 Docs:  http://127.0.0.1:8000/docs
@@ -14,63 +15,59 @@ from collections.abc import Iterator
 from datetime import timezone
 from typing import Literal
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import FileResponse
+import json
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from .auth import bearer, check_login, end_session, hash_password, make_auth_dependencies, start_session
+from . import ui_bridge
+from .auth import bearer, check_login, end_session, hash_password, make_auth_dependencies, start_session, user_for_token
 from .config import BACKEND_DIR, Settings
-from .db import Base, make_engine, make_session_factory, secure_supabase_tables
-from .devices import lan_address, make_device_dependency, new_pair_code, qr_svg_data_uri, receive_video, redeem_pair_code
+from .db import Base, add_missing_columns, make_engine, make_session_factory, secure_supabase_tables
+from .devices import lan_address, make_device_dependency, new_pair_code, qr_svg_data_uri, redeem_pair_code
 from .leaderboard import build_leaderboard
 from .live import LiveHub
-from .models import Device, Recording, Rep, ScanSet, User, utcnow
+from .models import Device, Rep, ScanSet, User, utcnow
 from .schemas import (
     AuthOut,
     Credentials,
     DeviceOut,
     LeaderboardOut,
     LiveAnswerIn,
-    LiveCommandIn,
     LiveOfferIn,
     PairCodeOut,
     PairIn,
     PairOut,
     PhoneStateIn,
-    PlayOut,
-    RecordingOut,
+    ProfileIn,
     ScanIn,
+    SignUpIn,
     ScanOut,
     UserOut,
 )
 from .scoring import QUALIFYING_FORM_SCORE, Exercise, qualifies, set_form_score, set_points
-from .storage import LocalStore, SupabaseStore
 
 STATIC_DIR = BACKEND_DIR / "app" / "static"
+SESSION_COOKIE = "revgym_session"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     engine = make_engine(settings.database_url or None)
     Base.metadata.create_all(engine)
+    add_missing_columns(engine)
     secure_supabase_tables(engine)
     SessionLocal = make_session_factory(engine)
 
-    if settings.uses_supabase_storage:
-        store = SupabaseStore(settings.supabase_url, settings.supabase_service_key, settings.storage_bucket)
-        store.ensure_bucket()
-    else:
-        store = LocalStore(settings.upload_dir, settings.secret_key)
-    temp_dir = settings.upload_dir / ".incoming"
     live = LiveHub()
 
-    app = FastAPI(title="RevGym API", version="0.4.0")
+    app = FastAPI(title="RevGym API", version="0.6.0")
     app.state.engine = engine
-    app.state.store = store
     app.state.live = live
 
     def get_db() -> Iterator[Session]:
@@ -88,7 +85,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ---------- web pages ----------
 
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    class RevalidatedStatic(StaticFiles):
+        """Browsers re-check our CSS/JS on each load (cheap 304s), so updates show up right away."""
+
+        def file_response(self, *args, **kwargs):
+            response = super().file_response(*args, **kwargs)
+            response.headers["Cache-Control"] = "no-cache"
+            return response
+
+    app.mount("/static", RevalidatedStatic(directory=STATIC_DIR), name="static")
 
     @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
     def pc_app():
@@ -102,11 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {
-            "status": "ok",
-            "database": engine.dialect.name,
-            "video_storage": "supabase" if settings.uses_supabase_storage else "local",
-        }
+        return {"status": "ok", "database": engine.dialect.name}
 
     @app.get("/exercises")
     def list_exercises():
@@ -114,35 +115,185 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ---------- accounts ----------
 
+    def set_session_cookie(request: Request, response: Response, token: str) -> None:
+        # Lets the team's unchanged UI page (/ui/) know who you are. HttpOnly: page scripts can't read it.
+        # Only GET routes accept this cookie, so other sites can't use it to change anything.
+        response.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="lax",
+                            secure=request.url.scheme == "https", max_age=30 * 24 * 3600, path="/")
+
+    def cookie_user(request: Request, db: Session = Depends(get_db)) -> User | None:
+        token = request.cookies.get(SESSION_COOKIE)
+        return user_for_token(db, token) if token else None
+
+    def viewer(
+        bearer_user: User | None = Depends(optional_user),
+        from_cookie: User | None = Depends(cookie_user),
+    ) -> User | None:
+        """For read-only routes: a Bearer token or the /ui/ cookie."""
+        return bearer_user or from_cookie
+
     @app.post("/auth/register", response_model=AuthOut, status_code=status.HTTP_201_CREATED)
-    def register(body: Credentials, db: Session = Depends(get_db)):
-        user = User(username=body.username, password_hash=hash_password(body.password))
+    def register(body: SignUpIn, request: Request, response: Response, db: Session = Depends(get_db)):
+        """Sign up. Saves the account and profile to the users table (Supabase)."""
+        user = User(
+            username=body.username,
+            password_hash=hash_password(body.password),
+            grad_year=body.grad_year,
+            major=body.major,
+            weight_lb=body.weight_lb,
+            height_in=body.height_in,
+            gender=body.gender,
+            birth_date=body.birth_date,
+        )
         db.add(user)
         try:
             db.commit()
         except IntegrityError:
             db.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT, "That username is taken.")
-        return {"token": start_session(db, user), "user": user}
+        token = start_session(db, user)
+        set_session_cookie(request, response, token)
+        return {"token": token, "user": user}
 
     @app.post("/auth/login", response_model=AuthOut)
-    def login(body: Credentials, db: Session = Depends(get_db)):
+    def login(body: Credentials, request: Request, response: Response, db: Session = Depends(get_db)):
         user = check_login(db, body.username, body.password)
         if user is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong username or password.")
-        return {"token": start_session(db, user), "user": user}
+        token = start_session(db, user)
+        set_session_cookie(request, response, token)
+        return {"token": token, "user": user}
 
     @app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
     def logout(
+        response: Response,
         creds: HTTPAuthorizationCredentials | None = Depends(bearer),
         _user: User = Depends(current_user),
         db: Session = Depends(get_db),
     ):
         end_session(db, creds.credentials)
+        response.delete_cookie(SESSION_COOKIE, path="/")
 
     @app.get("/auth/me", response_model=UserOut)
     def me(user: User = Depends(current_user)):
         return user
+
+    @app.patch("/me/profile", response_model=UserOut)
+    def update_profile(body: ProfileIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """Change your profile (graduation year, major, weight, height, gender, date of birth, ...)."""
+        for field_name, value in body.model_dump(exclude_unset=True).items():
+            setattr(user, field_name, value)
+        db.commit()
+        db.refresh(user)
+        return user
+
+    # ---------- the team's UI, unchanged, with live data ----------
+
+    ui_dir = settings.ui_dir
+
+    def ui_file(name: str):
+        """A file inside the UI folder, or None (also blocks ../ tricks)."""
+        root = ui_dir.resolve()
+        if not root.is_dir():
+            return None
+        path = (root / name).resolve()
+        if root not in path.parents or not path.is_file():
+            return None
+        return path
+
+    @app.get("/ui", include_in_schema=False)
+    def ui_redirect():
+        return RedirectResponse("/ui/")
+
+    @app.get("/ui/", include_in_schema=False)
+    def ui_page(user: User | None = Depends(cookie_user)):
+        index = ui_file("index.html")
+        if index is None:
+            return HTMLResponse(f"<p>The team's UI folder wasn't found at <code>{ui_dir}</code>. "
+                                "Put the <code>ui/</code> folder from the front-end branch there, "
+                                "or set UI_DIR in backend/.env.</p>", status_code=404)
+        if user is None:
+            return FileResponse(STATIC_DIR / "ui-login.html", headers={"Cache-Control": "no-store"})
+        # index.html has no <html>/<head> (it was written for an artifact host), so wrap it
+        # the same way the team's preview.html does. The UI's own content is untouched.
+        body = index.read_text(encoding="utf-8")
+        page = ('<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
+                '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>\n'
+                f"{body}\n</body></html>\n")
+        return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+    @app.get("/ui/logout", include_in_schema=False)
+    def ui_logout_page():
+        return FileResponse(STATIC_DIR / "ui-logout.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/ui/whoami", include_in_schema=False)
+    def ui_whoami(user: User | None = Depends(cookie_user)):
+        if user is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not logged in")
+        return {"username": user.username}
+
+    @app.post("/ui/logout", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
+    def ui_logout(request: Request, response: Response, db: Session = Depends(get_db)):
+        """End the /ui/ session. Only RevGym's own pages may call this (blocks other sites logging you out)."""
+        origin = request.headers.get("origin")
+        fetch_site = request.headers.get("sec-fetch-site")
+        same_origin = (origin is None or origin == f"{request.url.scheme}://{request.url.netloc}") and \
+                      fetch_site in (None, "same-origin")
+        if not same_origin:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "cross-site request")
+        token = request.cookies.get(SESSION_COOKIE)
+        if token:
+            end_session(db, token)
+        response.delete_cookie(SESSION_COOKIE, path="/")
+
+    @app.get("/ui/mock-data.js", include_in_schema=False)
+    def ui_live_data(user: User | None = Depends(cookie_user), db: Session = Depends(get_db)):
+        """The team's own mock-data.js (for the catalog: exercises, tips, gyms), then real data on top."""
+        original = ui_file("mock-data.js")
+        if original is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND)
+        js = original.read_text(encoding="utf-8")
+        if user is not None:
+            live = json.dumps(ui_bridge.build_live(db, user), ensure_ascii=False)
+            js += f"\n\n/* Live RevGym data for {user.username} (added by the backend). */\n" \
+                  f"Object.assign(window.REVGYM_MOCK, {live});\n"
+        return Response(js, media_type="text/javascript", headers={"Cache-Control": "no-store"})
+
+    @app.get("/ui/{path:path}", include_in_schema=False)
+    def ui_static(path: str):
+        file = ui_file(path)
+        if file is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND)
+        return FileResponse(file, headers={"Cache-Control": "no-cache"})
+
+    def _live_for(user: User | None, db: Session) -> dict:
+        if user is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not logged in")
+        return ui_bridge.build_live(db, user)
+
+    @app.get("/api/ui/live")
+    def api_ui_live(user: User | None = Depends(viewer), db: Session = Depends(get_db)):
+        """Everything the UI reads from REVGYM_MOCK (users, leaderboards, profile, history...)."""
+        return _live_for(user, db)
+
+    @app.get("/api/ui/form-leaderboard")
+    def api_ui_form_board(
+        exercise: str = Query(..., pattern="^(squat|bench|deadlift|ohp|pullup|curl|rdl|row|lunge)$"),
+        period: Literal["week", "month", "all"] = "week",
+        user: User | None = Depends(viewer),
+        db: Session = Depends(get_db),
+    ):
+        """Same shape as the UI's Api.getFormLeaderboard(exerciseId, period)."""
+        return ui_bridge.form_leaderboard(_live_for(user, db), exercise, period)
+
+    @app.get("/api/ui/consistency-leaderboard")
+    def api_ui_consistency_board(
+        period: Literal["week", "month", "all"] = "week",
+        user: User | None = Depends(viewer),
+        db: Session = Depends(get_db),
+    ):
+        """Same shape as the UI's Api.getConsistencyLeaderboard(period)."""
+        return ui_bridge.consistency_leaderboard(_live_for(user, db), period)
 
     # ---------- scans (analysed sets) ----------
 
@@ -215,7 +366,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _device_out(d: Device) -> DeviceOut:
         out = DeviceOut.model_validate(d)
         st = live.status(d.id)
-        out.online, out.camera, out.recording = st["online"], st["camera"], st["recording"]
+        out.online, out.camera = st["online"], st["camera"]
         return out
 
     @app.get("/me/devices", response_model=list[DeviceOut])
@@ -247,95 +398,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         owned_device(device_id, user, db)
         return {"sdp": live.get_answer(device_id, offer_id)}
 
-    @app.post("/me/devices/{device_id}/live/command", status_code=status.HTTP_202_ACCEPTED)
-    def live_command(device_id: int, body: LiveCommandIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
-        """PC: tell the phone to start or stop recording."""
-        owned_device(device_id, user, db)
-        if body.action == "start" and body.exercise is None:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Pick a lift before recording.")
-        if not live.status(device_id)["online"]:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Your phone isn't connected. Open the RevGym camera page on it.")
-        live.send_command(device_id, body.model_dump(mode="json"))
-
     # ---------- live camera: phone side ----------
 
     @app.post("/device/live/poll")
     def phone_poll(body: PhoneStateIn, device: Device = Depends(current_device)):
-        """Phone: check in about once a second. Returns any new offer and commands."""
-        return live.phone_poll(device.id, body.model_dump())
+        """Phone: check in about once a second. Returns any new live-view offer."""
+        return live.phone_poll(device.id, body.camera)
 
     @app.post("/device/live/answer", status_code=status.HTTP_204_NO_CONTENT)
     def phone_answer(body: LiveAnswerIn, device: Device = Depends(current_device)):
         live.post_answer(device.id, body.offer_id, body.sdp)
-
-    # ---------- recordings (phone -> PC) ----------
-
-    def _recording_out(rec: Recording) -> RecordingOut:
-        out = RecordingOut.model_validate(rec)
-        out.device_name = rec.device.name if rec.device else None
-        return out
-
-    @app.post("/recordings", response_model=RecordingOut, status_code=status.HTTP_201_CREATED)
-    def upload_recording(
-        exercise: Exercise = Form(...),
-        video: UploadFile = File(...),
-        device: Device = Depends(current_device),
-        db: Session = Depends(get_db),
-    ):
-        """Phone: upload a recorded set. It shows up on the PC right away."""
-        temp_path, stored_name, content_type, size = receive_video(video, temp_dir)
-        try:
-            store.put(stored_name, temp_path, content_type)
-        except Exception:
-            temp_path.unlink(missing_ok=True)
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Couldn't save the video. Try again.")
-        rec = Recording(
-            user_id=device.user_id,
-            device_id=device.id,
-            exercise=exercise.value,
-            stored_name=stored_name,
-            content_type=content_type,
-            size_bytes=size,
-        )
-        db.add(rec)
-        db.commit()
-        db.refresh(rec)
-        return _recording_out(rec)
-
-    @app.get("/me/recordings", response_model=list[RecordingOut])
-    def my_recordings(
-        limit: int = Query(30, ge=1, le=200),
-        user: User = Depends(current_user),
-        db: Session = Depends(get_db),
-    ):
-        recs = db.scalars(
-            select(Recording)
-            .where(Recording.user_id == user.id)
-            .options(selectinload(Recording.device))
-            .order_by(Recording.created_at.desc(), Recording.id.desc())
-            .limit(limit)
-        ).all()
-        return [_recording_out(r) for r in recs]
-
-    @app.get("/me/recordings/{recording_id}/play", response_model=PlayOut)
-    def play_recording(recording_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-        """PC: a link to the video that works for 15 minutes."""
-        rec = db.get(Recording, recording_id)
-        if rec is None or rec.user_id != user.id:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "recording not found")
-        try:
-            return {"url": store.play_url(rec.stored_name)}
-        except Exception:
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Couldn't load that video right now.")
-
-    @app.get("/media/{name}", include_in_schema=False)
-    def local_media(name: str, exp: int, sig: str):
-        if not isinstance(store, LocalStore):
-            raise HTTPException(status.HTTP_404_NOT_FOUND)
-        path = store.open_signed(name, exp, sig)
-        if path is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "This link expired.")
-        return FileResponse(path)
 
     # ---------- leaderboard ----------
 

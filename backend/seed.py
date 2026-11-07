@@ -16,12 +16,29 @@ BASES = {"bench_press": 225, "squat": 315, "bicep_curl": 45, "shoulder_press": 1
 USERS = ["maya.lifts", "drose", "kofi_b", "jen.str", "tlee", "ari.k", "sam_pr", "noor"]
 
 
+MAJORS = ["Kinesiology", "Computer Science", "Mechanical Engineering", "Biology", "Finance", "Nutrition", "Psychology"]
+GENDERS = ["female", "male", "nonbinary", "prefer_not_to_say"]
+
+
+def demo_profile(rng: random.Random) -> dict:
+    """Made-up sign-up details for demo accounts."""
+    grad = rng.randint(2026, 2029)
+    return {
+        "grad_year": grad,
+        "major": rng.choice(MAJORS),
+        "weight_lb": round(rng.uniform(120, 230), 1),
+        "height_in": rng.randint(60, 76),
+        "gender": rng.choice(GENDERS),
+        "birth_date": f"{grad - 22}-{rng.randint(1, 12):02d}-{rng.randint(1, 28):02d}",
+    }
+
+
 def main(seed: int = 7) -> None:
     rng = random.Random(seed)
     client = TestClient(create_app())
     now = datetime.now(timezone.utc)
     for name in USERS:
-        res = client.post("/auth/register", json={"username": name, "password": DEMO_PASSWORD})
+        res = client.post("/auth/register", json={"username": name, "password": DEMO_PASSWORD, **demo_profile(rng)})
         if res.status_code == 409:
             print(f"{name} already exists, skipping")
             continue

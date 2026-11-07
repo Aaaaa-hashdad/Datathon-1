@@ -63,7 +63,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > span:first-child { font-weight: 700; font-size: 15px; }
-.field input, .field select, select {
+.field input, .field select {
   width: 100%; height: 52px; padding: 0 14px;
   border: 1.5px solid #cfc4bf; border-radius: 12px;
   background: #fff; color: var(--ink);
@@ -130,6 +130,114 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .auth-brand { padding: 40px 24px; align-items: center; text-align: center; }
   .reveille-xl { width: 140px; height: 140px; }
 }
+
+/* ---------- /ui/ log in + log out (uses the team's logo image) ---------- */
+
+.ui-auth { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.ui-brand {
+  background: #f9f7f6;              /* same off-white as the logo's background */
+  border-right: 6px solid var(--maroon);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 18px; padding: 48px 32px; text-align: center;
+}
+.ui-logo { width: min(380px, 80%); height: auto; display: block; }
+.ui-brand p { margin: 0; color: var(--maroon); font-size: 20px; font-weight: 600; line-height: 1.4; max-width: 30ch; }
+/* Right side: Texas A&M campus photo, with a frosted see-through card on top. */
+.ui-panel {
+  display: flex; align-items: center; justify-content: center; padding: 48px 32px;
+  background: #3c0000 url("/static/campus.jpg") center 62% / cover no-repeat;
+}
+.ui-panel .auth-card {
+  width: 100%; max-width: 440px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 16px 40px rgba(20, 10, 12, 0.35);
+}
+/* The card's other white parts are see-through too (tabs, inputs, outline button). */
+.ui-panel .segmented { background: rgba(255, 255, 255, 0.45); }
+.ui-panel .field input {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(80, 0, 0, 0.28);
+}
+.ui-panel .field input:focus { background: rgba(255, 255, 255, 0.8); }
+.ui-panel .secondary { background: rgba(255, 255, 255, 0.45); }
+.ui-panel .error { background: rgba(253, 236, 236, 0.85); }
+.ui-panel .muted, .ui-panel .hint { color: #2e2427; }
+
+/* The small Log in button on the photo, and the box it opens. */
+.ui-panel { position: relative; }
+/* When the box is open, the photo fades back (darker and softer) so the box stands out. */
+.ui-panel::before {
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: rgba(28, 8, 10, 0.5);
+  -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px);
+  opacity: 0; transition: opacity 0.35s ease;
+}
+.ui-panel.is-open::before { opacity: 1; }
+/* A gentle vignette: the photo's edges fade out a little, the middle stays clear. */
+.ui-panel::after {
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(ellipse 75% 70% at 50% 55%, transparent 55%, rgba(28, 8, 10, 0.42) 100%);
+  box-shadow: inset 0 0 60px rgba(28, 8, 10, 0.35);
+}
+.ui-panel > * { z-index: 1; }
+@media (prefers-reduced-motion: reduce) { .ui-panel::before { transition: none; } }
+.ui-open {
+  /* Lower part of the photo, centered left-to-right. The box it opens stays centered. */
+  position: absolute; left: 50%; bottom: 16%; transform: translateX(-50%);
+  min-width: 240px; min-height: 50px; padding: 0 48px;
+  border: 1px solid rgba(255, 255, 255, 0.75); border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  color: var(--maroon); font-size: 17px; font-weight: 700; letter-spacing: 0.3px;
+  box-shadow: 0 10px 28px rgba(20, 10, 12, 0.35);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.ui-open:hover { background: rgba(255, 255, 255, 0.82); transform: translate(-50%, -1px); }
+@media (max-width: 820px) {
+  .ui-panel { min-height: 320px; }
+  .ui-open { bottom: 28px; }
+}
+.ui-pop { position: relative; animation: ui-pop-in 0.18s ease-out; }
+@keyframes ui-pop-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .ui-pop { animation: none; } .ui-open { transition: none; } }
+.ui-close {
+  position: absolute; top: 12px; right: 12px;
+  width: 40px; height: 40px; border: 0; border-radius: 20px;
+  background: rgba(255, 255, 255, 0.5); color: var(--ink);
+  font-size: 24px; line-height: 1;
+}
+.ui-close:hover { background: rgba(255, 255, 255, 0.85); }
+.ui-panel .muted { margin: 0; }
+.ui-actions { display: flex; flex-direction: column; gap: 10px; }
+.ui-actions a.secondary, .ui-actions button.secondary {
+  min-height: 52px; display: flex; align-items: center; justify-content: center;
+  font-size: 17px; text-decoration: none; border-radius: 14px;
+}
+.ui-switch { margin: 0; text-align: center; font-size: 15px; color: var(--muted); }
+.ui-switch a { color: var(--maroon); font-weight: 700; }
+@media (max-width: 820px) {
+  .ui-auth { grid-template-columns: 1fr; }
+  .ui-brand { border-right: 0; border-bottom: 6px solid var(--maroon); padding: 28px 20px; }
+  .ui-panel { padding: 32px 16px; }
+  .ui-logo { width: min(240px, 70%); }
+  .ui-brand p { font-size: 17px; }
+}
+
+/* ---------- Sign-up profile fields ---------- */
+
+.signup-fields { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.signup-fields[hidden] { display: none; }
+.signup-fields legend { padding: 0; margin-bottom: 4px; font-weight: 700; font-size: 17px; color: var(--maroon); }
+.su-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.su-height { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.signup-fields .field input, .signup-fields .field select { height: 48px; }
+.ui-panel .field select { background: rgba(255, 255, 255, 0.55); border: 1.5px solid rgba(80, 0, 0, 0.28); }
+/* The sign-up box is taller: let the right side scroll instead of squeezing it. */
+.ui-panel { overflow-y: auto; }
+.ui-panel .auth-card { margin: auto 0; }
 
 /* ---------- PC: dashboard ---------- */
 

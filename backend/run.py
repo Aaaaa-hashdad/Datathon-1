@@ -7,9 +7,13 @@ Phones only allow live camera access on https, so the phone side uses a
 self-signed certificate made here on first run (saved in backend/certs/).
 The phone will warn about it once; that's expected for a local certificate.
 
-Usage: python run.py
+Usage: python run.py [--ui-dir PATH] [--pc-port 8000] [--phone-port 8443]
+
+--ui-dir points at the team's ui/ folder (front-end branch); it's served unchanged
+at http://127.0.0.1:8000/ui/ with live data. Default: ../ui next to backend/.
 """
 
+import argparse
 import asyncio
 import contextlib
 import datetime
@@ -79,6 +83,16 @@ def ensure_certificate(ip: str) -> tuple[Path, Path]:
 def main() -> None:
     import uvicorn
 
+    global PC_PORT, PHONE_PORT
+    parser = argparse.ArgumentParser(description="Start RevGym on this PC.")
+    parser.add_argument("--ui-dir", help="the team's ui/ folder to serve at /ui/")
+    parser.add_argument("--pc-port", type=int, default=PC_PORT)
+    parser.add_argument("--phone-port", type=int, default=PHONE_PORT)
+    args = parser.parse_args()
+    PC_PORT, PHONE_PORT = args.pc_port, args.phone_port
+    if args.ui_dir:
+        os.environ["UI_DIR"] = str(Path(args.ui_dir).resolve())
+
     ip = lan_ip()
     cert, key = ensure_certificate(ip)
     # Tell the app where the phone page lives before it's imported.
@@ -97,6 +111,7 @@ def main() -> None:
                                   ssl_certfile=str(cert), ssl_keyfile=str(key)))
 
     print(f"\n  RevGym is running.\n  PC app:       http://127.0.0.1:{PC_PORT}\n"
+          f"  Team UI:      http://127.0.0.1:{PC_PORT}/ui/\n"
           f"  Phone camera: https://{ip}:{PHONE_PORT}/phone  (use the QR code in the app)\n")
 
     async def serve_both():

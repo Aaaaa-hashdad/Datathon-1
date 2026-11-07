@@ -1,19 +1,22 @@
-from datetime import timedelta
+from datetime import date, timedelta
 
-from conftest import PASSWORD
+import pytest
+from conftest import PASSWORD, PROFILE, signup
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import PairCode
+from app.models import PairCode, User
 
 
 def creds(username, password=PASSWORD):
+    """Login body (username + password only)."""
     return {"username": username, "password": password}
 
 
 # ---------- accounts ----------
 
 def test_register_login_me_logout(client):
-    res = client.post("/auth/register", json=creds("maya"))
+    res = client.post("/auth/register", json=signup("maya"))
     assert res.status_code == 201
     assert res.json()["user"]["username"] == "maya"
     assert "password" not in res.text and "hash" not in res.text
@@ -28,7 +31,7 @@ def test_register_login_me_logout(client):
 
 
 def test_bad_logins_give_the_same_message(client):
-    client.post("/auth/register", json=creds("maya"))
+    client.post("/auth/register", json=signup("maya"))
     wrong_pw = client.post("/auth/login", json=creds("maya", "wrong-password"))
     no_user = client.post("/auth/login", json=creds("nobody"))
     assert wrong_pw.status_code == no_user.status_code == 401
@@ -36,10 +39,64 @@ def test_bad_logins_give_the_same_message(client):
 
 
 def test_register_rules(client):
-    client.post("/auth/register", json=creds("maya"))
-    assert client.post("/auth/register", json=creds("maya")).status_code == 409
-    assert client.post("/auth/register", json=creds("ok_name", "short")).status_code == 422
-    assert client.post("/auth/register", json=creds("bad name!")).status_code == 422
+    client.post("/auth/register", json=signup("maya"))
+    assert client.post("/auth/register", json=signup("maya")).status_code == 409
+    assert client.post("/auth/register", json=signup("ok_name", "short")).status_code == 422
+    assert client.post("/auth/register", json=signup("bad name!")).status_code == 422
+
+
+# ---------- sign-up profile ----------
+
+def test_signup_saves_the_profile(client):
+    res = client.post("/auth/register", json=signup("maya", grad_year=2026, major="  Computer Science ",
+                                                    weight_lb=142.5, height_in=65, gender="female", birth_date="2004-09-30"))
+    assert res.status_code == 201, res.text
+    token = res.json()["token"]
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).json()
+    assert (me["grad_year"], me["major"], me["weight_lb"], me["height_in"], me["gender"], me["birth_date"]) == \
+        (2026, "Computer Science", 142.5, 65, "female", "2004-09-30")
+    # It's really in the users table.
+    with Session(client.app.state.engine) as db:
+        row = db.scalar(select(User).where(User.username == "maya"))
+        assert (row.grad_year, row.gender, row.birth_date) == (2026, "female", date(2004, 9, 30))
+
+
+@pytest.mark.parametrize("field", ["grad_year", "major", "weight_lb", "height_in", "gender", "birth_date"])
+def test_signup_needs_every_profile_field(client, field):
+    body = signup("maya")
+    del body[field]
+    assert client.post("/auth/register", json=body).status_code == 422
+
+
+@pytest.mark.parametrize("change, words", [
+    ({"weight_lb": 20}, "greater than or equal to 50"),
+    ({"height_in": 120}, "less than or equal to 96"),
+    ({"gender": "robot"}, "Input should be"),
+    ({"grad_year": 1900}, "graduation year"),
+    ({"birth_date": str(date.today() - timedelta(days=365 * 10))}, "at least 13"),
+    ({"birth_date": str(date.today() + timedelta(days=5))}, "future"),
+    ({"major": "x"}, "at least 2"),
+])
+def test_signup_profile_rules(client, change, words):
+    res = client.post("/auth/register", json=signup("maya", **change))
+    assert res.status_code == 422
+    assert words in res.text
+    with Session(client.app.state.engine) as db:
+        assert db.scalar(select(User)) is None  # nothing saved
+
+
+def test_profile_can_be_changed_later(client, make_user):
+    maya = make_user("maya")
+    res = client.patch("/me/profile", headers=maya.headers, json={"weight_lb": 180, "major": "Nutrition"})
+    assert res.status_code == 200
+    assert (res.json()["weight_lb"], res.json()["major"], res.json()["grad_year"]) == (180, "Nutrition", PROFILE["grad_year"])
+    assert client.patch("/me/profile", headers=maya.headers, json={"birth_date": "2030-01-01"}).status_code == 422
+    assert client.patch("/me/profile", json={"weight_lb": 1}).status_code == 401
+
+
+def test_login_only_needs_username_and_password(client):
+    client.post("/auth/register", json=signup("maya"))
+    assert client.post("/auth/login", json=creds("maya")).status_code == 200
 
 
 def test_password_is_hashed(client):
@@ -59,15 +116,6 @@ def pair(client, user, name="Pixel"):
     res = client.post("/devices/pair", json={"code": code, "device_name": name})
     assert res.status_code == 200, res.text
     return {"X-Device-Token": res.json()["device_token"]}
-
-
-def upload(client, device_headers, exercise="squat", data=b"\x00\x00\x00\x18ftypmp42fake-video", ctype="video/mp4"):
-    return client.post(
-        "/recordings",
-        data={"exercise": exercise},
-        files={"video": ("set.mp4", data, ctype)},
-        headers=device_headers,
-    )
 
 
 def test_pair_code_gives_qr_for_https_phone_page(client, make_user):
@@ -109,53 +157,22 @@ def test_expired_pair_code_rejected(client, make_user):
     assert "expired" in res.json()["detail"]
 
 
-def test_phone_upload_syncs_to_pc(client, make_user):
-    maya, bob = make_user("maya"), make_user("bob")
-    phone = pair(client, maya, "Maya's iPhone")
-
-    assert client.get("/device/me", headers=phone).json() == {"device_name": "Maya's iPhone", "username": "maya"}
-
-    res = upload(client, phone, exercise="deadlift")
-    assert res.status_code == 201, res.text
-    rec = res.json()
-    assert rec["exercise"] == "deadlift"
-    assert rec["status"] == "uploaded"
-    assert rec["device_name"] == "Maya's iPhone"
-
-    listed = client.get("/me/recordings", headers=maya.headers).json()
-    assert [r["id"] for r in listed] == [rec["id"]]
-    url = client.get(f"/me/recordings/{rec['id']}/play", headers=maya.headers).json()["url"]
-    video = client.get(url)  # signed link: works in a <video> tag without the login header
-    assert video.status_code == 200
-    assert video.content.endswith(b"fake-video")
-
-    # Tampered or other-file links don't work.
-    assert client.get(url.replace("sig=", "sig=0")).status_code == 404
-    assert client.get(url.replace("exp=", "exp=1")).status_code == 404
-
-    # Other users can't see or play it.
-    assert client.get("/me/recordings", headers=bob.headers).json() == []
-    assert client.get(f"/me/recordings/{rec['id']}/play", headers=bob.headers).status_code == 404
-
-    devices = client.get("/me/devices", headers=maya.headers).json()
-    assert devices[0]["last_seen_at"] is not None
-
-
-def test_upload_rules(client, make_user):
+def test_linked_phone_is_only_a_camera(client, make_user):
     maya = make_user("maya")
-    phone = pair(client, maya)
-    assert upload(client, {"X-Device-Token": "bogus"}).status_code == 401
-    assert upload(client, {}).status_code == 401
-    assert upload(client, maya.headers).status_code == 401  # a login token isn't a phone token
-    assert upload(client, phone, ctype="text/plain").status_code == 415
-    assert upload(client, phone, data=b"").status_code == 400
-    assert upload(client, phone, exercise="yoga").status_code == 422
+    phone = pair(client, maya, "Maya's iPhone")
+    assert client.get("/device/me", headers=phone).json() == {"device_name": "Maya's iPhone", "username": "maya"}
+    assert client.get("/me/devices", headers=maya.headers).json()[0]["last_seen_at"] is not None
+    # Nothing can be uploaded, and a phone token can't read or change the account.
+    assert client.post("/recordings", headers=phone, files={"video": ("x.mp4", b"x", "video/mp4")}).status_code in (404, 405)
+    assert client.post("/scan-files", headers=phone, files={"file": ("s.csv", b"x", "text/csv")}).status_code in (404, 405)
+    assert client.get("/auth/me", headers=phone).status_code == 401
+    assert client.patch("/me/profile", headers=phone, json={"major": "x y"}).status_code == 401
 
 
-def test_unlinked_phone_stops_syncing(client, make_user):
+def test_unlinked_phone_stops_working(client, make_user):
     maya = make_user("maya")
     phone = pair(client, maya)
     device_id = client.get("/me/devices", headers=maya.headers).json()[0]["id"]
     assert client.delete(f"/me/devices/{device_id}", headers=maya.headers).status_code == 204
-    assert upload(client, phone).status_code == 401
+    assert client.post("/device/live/poll", json={"camera": True}, headers=phone).status_code == 401
     assert client.get("/device/me", headers=phone).status_code == 401

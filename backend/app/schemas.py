@@ -1,11 +1,35 @@
 """Request and response shapes for the API."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .scoring import Exercise
+
+
+GENDERS = ("male", "female", "nonbinary", "other", "prefer_not_to_say")
+Gender = Literal["male", "female", "nonbinary", "other", "prefer_not_to_say"]
+
+
+def _check_birth_date(value: date | None) -> date | None:
+    if value is None:
+        return value
+    today = date.today()
+    age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
+    if value > today:
+        raise ValueError("Date of birth can't be in the future.")
+    if age < 13:
+        raise ValueError("You need to be at least 13 to use RevGym.")
+    if age > 100:
+        raise ValueError("Please check your date of birth.")
+    return value
+
+
+def _check_grad_year(value: int | None) -> int | None:
+    if value is not None and not 1950 <= value <= date.today().year + 8:
+        raise ValueError("Please check your graduation year.")
+    return value
 
 
 class Credentials(BaseModel):
@@ -13,12 +37,55 @@ class Credentials(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
+class SignUpIn(Credentials):
+    """Sign up: login details plus the profile. The profile fields are required here."""
+
+    grad_year: int
+    major: str = Field(min_length=2, max_length=80)
+    weight_lb: float = Field(ge=50, le=700)
+    height_in: float = Field(ge=36, le=96)          # 3 ft to 8 ft
+    gender: Gender
+    birth_date: date
+
+    _grad = field_validator("grad_year")(_check_grad_year)
+    _born = field_validator("birth_date")(_check_birth_date)
+    _major = field_validator("major")(lambda v: v.strip())
+
+
 class UserOut(BaseModel):
+    """Your own account, including the private profile fields (only ever sent to you)."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     username: str
     created_at: datetime
+    grad_year: int | None = None
+    major: str | None = None
+    weight_lb: float | None = None
+    height_in: float | None = None
+    gender: str | None = None
+    birth_date: date | None = None
+    display_name: str | None = None
+    home_gym: str | None = None
+    weekly_goal: int | None = None
+
+
+class ProfileIn(BaseModel):
+    """Change any profile field later. Leave out the ones you're not changing."""
+
+    grad_year: int | None = None
+    major: str | None = Field(default=None, min_length=2, max_length=80)
+    weight_lb: float | None = Field(default=None, ge=50, le=700)
+    height_in: float | None = Field(default=None, ge=36, le=96)
+    gender: Gender | None = None
+    birth_date: date | None = None
+    display_name: str | None = Field(default=None, max_length=60)
+    home_gym: Literal["rec", "polo", "other"] | None = None
+    weekly_goal: int | None = Field(default=None, ge=1, le=7)
+
+    _grad = field_validator("grad_year")(_check_grad_year)
+    _born = field_validator("birth_date")(_check_birth_date)
 
 
 class AuthOut(BaseModel):
@@ -44,18 +111,8 @@ class LiveAnswerIn(BaseModel):
     sdp: str = Field(min_length=10, max_length=20000)
 
 
-class LiveCommandIn(BaseModel):
-    action: Literal["start", "stop"]
-    exercise: Exercise | None = None
-
-
 class PhoneStateIn(BaseModel):
     camera: bool = False
-    recording: bool = False
-
-
-class PlayOut(BaseModel):
-    url: str
 
 
 class PairIn(BaseModel):
@@ -78,19 +135,6 @@ class DeviceOut(BaseModel):
     # Live camera status (phone page open and checking in).
     online: bool = False
     camera: bool = False
-    recording: bool = False
-
-
-class RecordingOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    exercise: Exercise
-    size_bytes: int
-    content_type: str
-    status: str
-    created_at: datetime
-    device_name: str | None = None
 
 
 class RepIn(BaseModel):

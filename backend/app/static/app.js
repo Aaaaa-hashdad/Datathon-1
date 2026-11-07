@@ -1,4 +1,4 @@
-// RevGym PC app: log in, leaderboard, link a phone by QR, live phone camera, recordings.
+// RevGym PC app: sign up / log in, leaderboard, link a phone by QR, live phone camera.
 (() => {
   "use strict";
 
@@ -28,8 +28,6 @@
     exercise: "all",
     period: "week",
     timers: {},
-    knownRecIds: null,
-    newRecIds: new Set(),
     knownDeviceIds: new Set(),
     devices: [],
     pairing: false,
@@ -47,8 +45,7 @@
     if (!res.ok) {
       let msg = "Something went wrong. Please try again.";
       try {
-        const data = await res.json();
-        if (typeof data.detail === "string") msg = data.detail;
+        msg = window.RevGymSignup.errorText(await res.json(), msg);
       } catch { /* not JSON */ }
       throw new Error(msg);
     }
@@ -98,6 +95,7 @@
     $("auth-submit").textContent = signup ? "Create account" : "Log in";
     $("password").setAttribute("autocomplete", signup ? "new-password" : "current-password");
     $("password-hint").hidden = !signup;
+    $("signup-fields").hidden = !signup;
     showError($("auth-error"), "");
   }
 
@@ -123,13 +121,23 @@
       showError($("auth-error"), problem[1]);
       return;
     }
+    let profile = {};
+    if (state.mode === "signup") {
+      const read = window.RevGymSignup.read();
+      if (read.error) {
+        $(read.field).focus();
+        showError($("auth-error"), read.error);
+        return;
+      }
+      profile = read.data;
+    }
 
     const submit = $("auth-submit");
     submit.disabled = true;
     submit.textContent = state.mode === "signup" ? "Creating account…" : "Logging in…";
     try {
       const path = state.mode === "signup" ? "/auth/register" : "/auth/login";
-      const data = await api(path, { method: "POST", body: { username, password }, auth: false });
+      const data = await api(path, { method: "POST", body: { username, password, ...profile }, auth: false });
       state.token = data.token;
       store.set(data.token);
       state.user = data.user;
@@ -150,8 +158,6 @@
     live.teardown();
     state.token = null;
     state.user = null;
-    state.knownRecIds = null;
-    state.newRecIds.clear();
     store.clear();
     $("app-view").hidden = true;
     $("auth-view").hidden = false;
@@ -170,9 +176,7 @@
     renderLiftTabs();
     loadBoard();
     loadDevices();
-    loadRecordings();
     every("devices", loadDevices, 2000);
-    every("recs", loadRecordings, 4000);
     every("board", loadBoard, 30000);
   }
 
@@ -237,7 +241,6 @@
   // ================= Phone linking (QR) =================
 
   function deviceStatusText(d) {
-    if (d.recording) return "Recording now";
     if (d.online && d.camera) return "Camera on, connected";
     if (d.online) return "Connected, camera off";
     return d.last_seen_at ? `Offline · last seen ${fmtTime(d.last_seen_at)}` : "Offline";
@@ -320,8 +323,6 @@
     let pc = null;
     let deviceId = null;
     let connecting = false;
-    let recording = false;
-    let recStarted = 0;
 
     function setStatus(text) { $("live-status").textContent = text; }
 
@@ -330,13 +331,7 @@
       pc = null;
       deviceId = null;
       connecting = false;
-      recording = false;
-      $("live-record").textContent = "Start recording";
-      $("live-record").classList.remove("stop");
-      $("live-exercise").disabled = false;
       $("live-video").srcObject = null;
-      stop("recClock");
-      $("rec-indicator").hidden = true;
       $("live-card").hidden = true;
     }
 
@@ -368,10 +363,8 @@
           if (conn !== pc) return;
           if (conn.connectionState === "connected") {
             setStatus(`Live from ${device.name}`);
-            $("live-record").disabled = false;
           } else if (["failed", "disconnected"].includes(conn.connectionState)) {
             setStatus("Lost the live view.");
-            $("live-record").disabled = true;
             $("live-retry").hidden = false;
           }
         };
@@ -407,107 +400,14 @@
       }
       $("live-card").hidden = false;
       if (deviceId !== phone.id || (!pc && !connecting)) connect(phone);
-
-      // Keep the record button in step with what the phone is actually doing.
-      if (phone.recording !== recording) {
-        recording = phone.recording;
-        const btn = $("live-record");
-        btn.textContent = recording ? "Stop recording" : "Start recording";
-        btn.classList.toggle("stop", recording);
-        $("live-exercise").disabled = recording;
-        $("rec-indicator").hidden = !recording;
-        if (recording) {
-          recStarted = Date.now();
-          const tick = () => { $("rec-timer").textContent = fmtClock(Math.round((Date.now() - recStarted) / 1000)); };
-          tick();
-          every("recClock", tick, 500);
-        } else {
-          stop("recClock");
-          setStatus(`Live from ${phone.name} · last set is uploading to Recordings`);
-        }
-      }
     }
 
-    async function toggleRecord() {
-      if (deviceId === null) return;
-      showError($("live-error"), "");
-      const btn = $("live-record");
-      btn.disabled = true;
-      try {
-        await api(`/me/devices/${deviceId}/live/command`, {
-          method: "POST",
-          body: recording ? { action: "stop" } : { action: "start", exercise: $("live-exercise").value },
-        });
-      } catch (err) {
-        showError($("live-error"), err.message);
-      } finally {
-        setTimeout(() => { btn.disabled = false; }, 800);
-      }
-    }
-
-    $("live-record").addEventListener("click", toggleRecord);
     $("live-retry").addEventListener("click", () => {
       const phone = state.devices.find((d) => d.id === deviceId) || state.devices.find((d) => d.online && d.camera);
       if (phone) connect(phone);
     });
     return { sync, teardown };
   })();
-
-  // ================= Recordings =================
-
-  async function loadRecordings() {
-    let recs;
-    try { recs = await api("/me/recordings"); } catch { return; }
-    const firstLoad = state.knownRecIds === null;
-    const known = state.knownRecIds || new Set();
-    if (!firstLoad) recs.forEach((r) => { if (!known.has(r.id)) state.newRecIds.add(r.id); });
-    state.knownRecIds = new Set(recs.map((r) => r.id));
-
-    $("rec-list").replaceChildren(...recs.map((r) => {
-      const isNew = state.newRecIds.has(r.id);
-      const play = () => { state.newRecIds.delete(r.id); playRecording(r); loadRecordings(); };
-      return el("li", {
-        class: isNew ? "is-new" : "", tabindex: "0", role: "button",
-        "aria-label": `Play ${LIFT_NAME[r.exercise]} from ${fmtTime(r.created_at)}`,
-        onclick: play,
-        onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); play(); } },
-      },
-        el("span", { class: "rec-thumb", "aria-hidden": "true" }, playIcon()),
-        el("span", { class: "rec-text" },
-          el("span", { class: "rec-name", text: LIFT_NAME[r.exercise] }),
-          el("span", { class: "rec-sub", text: `${fmtTime(r.created_at)} · ${r.device_name || "Phone"} · ${fmtSize(r.size_bytes)}` })),
-        el("span", { class: isNew ? "badge new" : "badge", text: isNew ? "New" : "Not analyzed yet" }),
-      );
-    }));
-    $("rec-empty").hidden = recs.length > 0;
-  }
-
-  function playIcon() {
-    const ns = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(ns, "svg");
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("width", "18");
-    svg.setAttribute("height", "18");
-    const path = document.createElementNS(ns, "path");
-    path.setAttribute("d", "M8 5v14l11-7z");
-    path.setAttribute("fill", "#fff");
-    svg.append(path);
-    return svg;
-  }
-
-  async function playRecording(rec) {
-    $("player-caption").textContent = "Loading video…";
-    $("player-wrap").hidden = false;
-    try {
-      // A short-lived link (Supabase Storage or this PC) the video tag can stream from.
-      const { url } = await api(`/me/recordings/${rec.id}/play`);
-      $("player").src = url;
-      $("player-caption").textContent = `${LIFT_NAME[rec.exercise]} · ${fmtTime(rec.created_at)}`;
-      $("player").focus();
-    } catch (err) {
-      $("player-caption").textContent = err.message;
-    }
-  }
 
   // ================= Start =================
 
@@ -529,6 +429,7 @@
     loadBoard();
   }));
 
+  window.RevGymSignup.init();
   (async () => {
     if (state.token) {
       try {

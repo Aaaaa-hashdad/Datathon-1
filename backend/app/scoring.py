@@ -13,6 +13,16 @@ class Exercise(str, Enum):
     SHOULDER_PRESS = "shoulder_press"
     DEADLIFT = "deadlift"
     LUNGE = "lunge"
+    # Also in the team's UI (ui/mock-data.js):
+    PULLUP = "pullup"
+    RDL = "rdl"
+    ROW = "row"
+
+    @classmethod
+    def _missing_(cls, value):
+        # Accept the UI's ids too ("bench", "curl", "ohp").
+        alias = {"bench": "bench_press", "curl": "bicep_curl", "ohp": "shoulder_press"}.get(str(value))
+        return cls(alias) if alias else None
 
 
 def set_form_score(rep_scores: list[float]) -> float:

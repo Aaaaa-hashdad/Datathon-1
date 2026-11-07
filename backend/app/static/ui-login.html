@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGym · Log in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="pc">
+<!-- Shown at /ui/ when you're not logged in. Logging in sets a cookie, then the team's UI loads with your real data.
+     The logo is the team's own image from ui/assets/ (used as-is). -->
+<main class="ui-auth">
+  <section class="ui-brand">
+    <img class="ui-logo" src="/ui/assets/reveille-logo.png" alt="RevGym: Reveille with the Texas A&amp;M logo">
+    <p>Howdy! Log in to see your form scores, streaks and leaderboards.</p>
+  </section>
+
+  <section class="ui-panel">
+    <!-- At first only this small button sits on the campus photo; it opens the log in box. -->
+    <button type="button" id="open-login" class="ui-open" aria-controls="login-card" aria-expanded="false">Log in</button>
+
+    <div class="card auth-card ui-pop" id="login-card" role="dialog" aria-labelledby="title" hidden>
+      <button type="button" id="close-login" class="ui-close" aria-label="Close log in">×</button>
+      <h2 id="title">Log in</h2>
+      <div class="segmented" role="tablist" aria-label="Log in or sign up">
+        <button type="button" role="tab" id="tab-login" aria-selected="true">Log in</button>
+        <button type="button" role="tab" id="tab-signup" aria-selected="false">Sign up</button>
+      </div>
+      <form id="form" novalidate style="display:flex;flex-direction:column;gap:18px">
+        <label class="field"><span>Username</span>
+          <input id="username" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="2" maxlength="32">
+        </label>
+        <label class="field"><span>Password</span>
+          <span class="password-wrap">
+            <input id="password" type="password" autocomplete="current-password" required minlength="8" maxlength="128">
+            <button type="button" id="toggle" class="ghost" aria-pressed="false">Show</button>
+          </span>
+          <small id="hint" class="hint" hidden>At least 8 characters. Usernames use letters, numbers, dots or underscores.</small>
+        </label>
+
+        <!-- Sign up only: saved to your profile in Supabase. Weight, height, gender and birthday stay private. -->
+        <fieldset id="signup-fields" class="signup-fields" hidden>
+          <legend>About you</legend>
+          <div class="su-grid">
+            <label class="field"><span>Graduation year</span>
+              <select id="su-grad" required><option value="">Choose…</option></select>
+            </label>
+            <label class="field"><span>Gender</span>
+              <select id="su-gender" required>
+                <option value="">Choose…</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+                <option value="nonbinary">Non-binary</option>
+                <option value="other">Other</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
+              </select>
+            </label>
+          </div>
+          <label class="field"><span>Major</span>
+            <input id="su-major" list="su-majors" autocomplete="off" maxlength="80" required placeholder="e.g. Kinesiology">
+            <datalist id="su-majors">
+              <option value="Kinesiology"></option><option value="Computer Science"></option>
+              <option value="Mechanical Engineering"></option><option value="Biomedical Sciences"></option>
+              <option value="Biology"></option><option value="Business"></option>
+              <option value="Finance"></option><option value="Nutrition"></option>
+              <option value="Psychology"></option><option value="Animal Science"></option>
+              <option value="Chemical Engineering"></option><option value="Industrial Engineering"></option>
+              <option value="Aerospace Engineering"></option><option value="Petroleum Engineering"></option>
+              <option value="Construction Science"></option><option value="Agricultural Business"></option>
+              <option value="Economics"></option><option value="Communication"></option>
+              <option value="Nursing"></option><option value="Sport Management"></option>
+            </datalist>
+          </label>
+          <div class="su-grid">
+            <div class="field"><span id="su-height-label">Height</span>
+              <div class="su-height" role="group" aria-labelledby="su-height-label">
+                <select id="su-ft" aria-label="Feet" required>
+                  <option value="">ft</option><option value="4">4 ft</option><option value="5">5 ft</option>
+                  <option value="6">6 ft</option><option value="7">7 ft</option>
+                </select>
+                <select id="su-in" aria-label="Inches" required>
+                  <option value="">in</option><option value="0">0 in</option><option value="1">1 in</option><option value="2">2 in</option>
+                  <option value="3">3 in</option><option value="4">4 in</option><option value="5">5 in</option><option value="6">6 in</option>
+                  <option value="7">7 in</option><option value="8">8 in</option><option value="9">9 in</option><option value="10">10 in</option>
+                  <option value="11">11 in</option>
+                </select>
+              </div>
+            </div>
+            <label class="field"><span>Weight (lb)</span>
+              <input id="su-weight" type="number" inputmode="decimal" min="50" max="700" step="0.1" required>
+            </label>
+          </div>
+          <label class="field"><span>Date of birth</span>
+            <input id="su-dob" type="date" required>
+          </label>
+          <small class="hint">Only your graduation year and major are shown to others. Weight, height, gender and birthday stay private.</small>
+        </fieldset>
+
+        <p id="error" class="error" role="alert" hidden></p>
+        <button type="submit" id="submit" class="primary">Log in</button>
+      </form>
+    </div>
+  </section>
+</main>
+<script src="/static/signup-fields.js"></script>
+<script>
+(() => {
+  let mode = "login";
+  const $ = (id) => document.getElementById(id);
+  const label = () => (mode === "login" ? "Log in" : "Create account");
+  const setMode = (m) => {
+    mode = m;
+    $("tab-login").setAttribute("aria-selected", String(m === "login"));
+    $("tab-signup").setAttribute("aria-selected", String(m === "signup"));
+    $("title").textContent = m === "login" ? "Log in" : "Create your account";
+    $("submit").textContent = label();
+    $("password").autocomplete = m === "login" ? "current-password" : "new-password";
+    $("hint").hidden = m === "login";
+    $("signup-fields").hidden = m === "login";
+    $("error").hidden = true;
+  };
+  window.RevGymSignup.init();
+  // The small button on the photo opens the box; × or Esc closes it again.
+  const panel = document.querySelector(".ui-panel");
+  const openBox = () => {
+    panel.classList.add("is-open");
+    $("login-card").hidden = false;
+    $("open-login").hidden = true;
+    $("open-login").setAttribute("aria-expanded", "true");
+    $("username").focus();
+  };
+  const closeBox = () => {
+    panel.classList.remove("is-open");
+    $("login-card").hidden = true;
+    $("open-login").hidden = false;
+    $("open-login").setAttribute("aria-expanded", "false");
+    $("open-login").focus();
+  };
+  $("open-login").onclick = openBox;
+  $("close-login").onclick = closeBox;
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("login-card").hidden) closeBox(); });
+
+  $("tab-login").onclick = () => setMode("login");
+  $("tab-signup").onclick = () => setMode("signup");
+  $("toggle").onclick = (e) => {
+    const show = $("password").type === "password";
+    $("password").type = show ? "text" : "password";
+    e.currentTarget.textContent = show ? "Hide" : "Show";
+    e.currentTarget.setAttribute("aria-pressed", String(show));
+  };
+  $("form").onsubmit = async (e) => {
+    e.preventDefault();
+    const username = $("username").value.trim(), password = $("password").value;
+    if (!/^[A-Za-z0-9_.]{2,32}$/.test(username)) return show("Usernames are 2–32 letters, numbers, dots or underscores.", "username");
+    if (password.length < 8) return show("Passwords need at least 8 characters.", "password");
+    let body = { username, password };
+    if (mode === "signup") {
+      const profile = window.RevGymSignup.read();
+      if (profile.error) return show(profile.error, profile.field);
+      body = { ...body, ...profile.data };
+    }
+    $("submit").disabled = true;
+    $("submit").textContent = mode === "login" ? "Logging in…" : "Creating account…";
+    try {
+      const res = await fetch(mode === "login" ? "/auth/login" : "/auth/register", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        let reply = null;
+        try { reply = await res.json(); } catch {}
+        return show(window.RevGymSignup.errorText(reply, "Something went wrong. Please try again."));
+      }
+      location.replace("/ui/");  // the server set the login cookie; /ui/ now loads the app
+    } catch {
+      show("Couldn't reach RevGym. Is it running?");
+    } finally {
+      $("submit").disabled = false;
+      $("submit").textContent = label();
+    }
+  };
+  function show(msg, field) {
+    $("error").textContent = msg;
+    $("error").hidden = false;
+    if (field) $(field).focus();
+  }
+})();
+</script>
+</body>
+</html>

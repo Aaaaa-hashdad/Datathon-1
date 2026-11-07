@@ -7,4 +7,5 @@ python-dotenv==1.0.1
 segno==1.6.1
 cryptography==44.0.0
 httpx==0.28.1
+tzdata==2024.2
 pytest==8.3.4

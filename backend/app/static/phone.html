@@ -40,7 +40,7 @@
     </svg>
     <div>
       <div class="wordmark">RevGym Camera</div>
-      <p id="top-line">Your PC sees what this camera sees.</p>
+      <p id="top-line">Live camera for your PC. Nothing is recorded.</p>
     </div>
   </header>
 
@@ -67,34 +67,15 @@
     <p class="ok" id="linked-line"></p>
     <div class="phone-frame">
       <video id="preview" autoplay playsinline muted aria-label="Camera preview"></video>
-      <span id="phone-rec" class="rec-indicator" hidden>● REC <span id="phone-rec-timer">0:00</span></span>
       <span id="pc-chip" class="pc-chip">PC not watching yet</span>
     </div>
     <p id="camera-error" class="error" role="alert" hidden></p>
     <button type="button" id="camera-start" class="primary" hidden>Turn on camera</button>
 
-    <label class="field">
-      <span>Lift</span>
-      <select id="exercise">
-        <option value="bench_press">Bench Press</option>
-        <option value="squat">Squat</option>
-        <option value="bicep_curl">Bicep Curl</option>
-        <option value="shoulder_press">Shoulder Press</option>
-        <option value="deadlift">Deadlift</option>
-        <option value="lunge">Lunge</option>
-      </select>
-    </label>
-    <button type="button" id="record" class="record-btn" disabled><span class="record-dot" aria-hidden="true"></span><span id="record-label">Record</span></button>
-    <p class="muted small-text">You can also start and stop recording from your PC. Stand the phone sideways 6–8 ft away with your whole body in frame.</p>
-
-    <input id="file-fallback" type="file" accept="video/*" capture="environment" hidden>
-
-    <div id="upload-box" hidden>
-      <p id="upload-label" class="muted" aria-live="polite"></p>
-      <div class="progress" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progress"><div id="progress-bar"></div></div>
-    </div>
-    <p id="upload-done" class="ok" role="status" hidden>Sent to your PC ✓</p>
-    <p id="upload-error" class="error" role="alert" hidden></p>
+    <ul class="tips">
+      <li>Stand the phone sideways, 6–8 ft away, with your whole body in frame.</li>
+      <li>Keep this page open. Your PC watches live. Nothing is recorded or saved.</li>
+    </ul>
 
     <button type="button" id="unlink" class="link-btn">Unlink this phone</button>
   </main>

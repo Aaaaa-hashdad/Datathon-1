@@ -1,16 +1,16 @@
 """Live link between the PC and a linked phone's camera.
 
 The PC and phone talk directly over Wi-Fi with WebRTC (video goes phone -> PC,
-never through this server). This server only passes the small setup messages
-(the "offer" and "answer") and the PC's record/stop commands.
+never through this server, and is never stored). This server only passes the
+small setup messages: the PC's "offer" and the phone's "answer".
 
-Both sides poll about once a second. State lives in memory: it is only needed
+The phone polls about once a second. State lives in memory: it is only needed
 while both screens are open, and nothing here has to survive a restart.
 """
 
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 ONLINE_WINDOW_SECONDS = 6
 
@@ -19,9 +19,8 @@ ONLINE_WINDOW_SECONDS = 6
 class Channel:
     offer: dict | None = None          # from PC: {"id": n, "sdp": "..."}
     answer: dict | None = None         # from phone: {"id": n, "sdp": "..."}
-    commands: list[dict] = field(default_factory=list)  # PC -> phone, oldest first
     phone_seen: float = 0.0
-    phone_state: dict = field(default_factory=lambda: {"camera": False, "recording": False})
+    camera: bool = False
     next_id: int = 1
 
 
@@ -49,31 +48,22 @@ class LiveHub:
             ans = self._ch(device_id).answer
             return ans["sdp"] if ans and ans["id"] == offer_id else None
 
-    def send_command(self, device_id: int, command: dict) -> None:
-        with self._lock:
-            cmds = self._ch(device_id).commands
-            cmds.append(command)
-            del cmds[:-10]  # never let a stale backlog build up
-
     def status(self, device_id: int) -> dict:
         with self._lock:
             ch = self._ch(device_id)
             online = time.monotonic() - ch.phone_seen < ONLINE_WINDOW_SECONDS
-            return {"online": online, **(ch.phone_state if online else {"camera": False, "recording": False})}
+            return {"online": online, "camera": online and ch.camera}
 
     # ----- phone side -----
 
-    def phone_poll(self, device_id: int, state: dict | None) -> dict:
-        """Phone checks in: report its state, collect any new offer and commands."""
+    def phone_poll(self, device_id: int, camera: bool) -> dict:
+        """Phone checks in: report whether its camera is on, collect any new offer."""
         with self._lock:
             ch = self._ch(device_id)
             ch.phone_seen = time.monotonic()
-            if state is not None:
-                ch.phone_state = {"camera": bool(state.get("camera")), "recording": bool(state.get("recording"))}
-            offer = ch.offer
-            ch.offer = None
-            commands, ch.commands = ch.commands, []
-            return {"offer": offer, "commands": commands}
+            ch.camera = camera
+            offer, ch.offer = ch.offer, None
+            return {"offer": offer}
 
     def post_answer(self, device_id: int, offer_id: int, sdp: str) -> None:
         with self._lock:
