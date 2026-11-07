@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#500000">
+<title>RevGym Camera</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="phone-page">
+<div class="phone-shell">
+  <header class="phone-top">
+    <svg class="reveille-sm" viewBox="0 0 200 200" role="img" aria-label="Reveille">
+      <defs>
+        <clipPath id="revClip"><circle cx="100" cy="100" r="100"></circle></clipPath>
+        <radialGradient id="revSable" cx="50%" cy="38%" r="60%"><stop offset="0%" stop-color="#E6BC80"></stop><stop offset="60%" stop-color="#C98F52"></stop><stop offset="100%" stop-color="#94592A"></stop></radialGradient>
+        <radialGradient id="revMane" cx="50%" cy="45%" r="60%"><stop offset="0%" stop-color="#D6A468"></stop><stop offset="100%" stop-color="#9A6430"></stop></radialGradient>
+      </defs>
+      <g clip-path="url(#revClip)">
+        <circle cx="100" cy="100" r="100" fill="#EFE6DC"></circle>
+        <path d="M34 128 C22 92 36 52 64 40 L100 32 L136 40 C164 52 178 92 166 128 C156 156 44 156 34 128 Z" fill="url(#revMane)"></path>
+        <path d="M26 200 C24 168 36 148 52 138 C50 130 56 126 62 132 C62 122 70 120 74 128 C76 118 86 118 88 128 C92 122 98 126 100 136 C102 126 108 122 112 128 C114 118 124 118 126 128 C130 120 138 122 138 132 C144 126 150 130 148 138 C164 148 176 168 174 200 Z" fill="#FFFFFF"></path>
+        <path d="M62 62 C56 48 58 34 66 26 C74 22 82 32 88 52 Z" fill="#9A5422"></path>
+        <path d="M66 26 C60 24 53 28 50 37 C57 38 63 34 68 29 Z" fill="#6E3814"></path>
+        <path d="M138 62 C144 48 142 34 134 26 C126 22 118 32 112 52 Z" fill="#9A5422"></path>
+        <path d="M134 26 C140 24 147 28 150 37 C143 38 137 34 132 29 Z" fill="#6E3814"></path>
+        <path d="M68 52 C80 42 120 42 132 52 C141 64 137 86 127 106 C119 124 111 142 105 152 C103 156 97 156 95 152 C89 142 81 124 73 106 C63 86 59 64 68 52 Z" fill="url(#revSable)"></path>
+        <path d="M100 44 C97 58 96 78 93 98 C89 116 87 130 92 144 C95 152 105 152 108 144 C113 130 111 116 107 98 C104 78 103 58 100 44 Z" fill="#FFFFFF"></path>
+        <path d="M82 108 C86 128 93 146 100 156 C107 146 114 128 118 108 C110 118 90 118 82 108 Z" fill="#FFFFFF"></path>
+        <path d="M75 80 Q83 73 91 79 Q83 84 75 80 Z" fill="#2A1A10"></path>
+        <path d="M125 80 Q117 73 109 79 Q117 84 125 80 Z" fill="#2A1A10"></path>
+        <path d="M93 145 C93 140 107 140 107 145 C107 151 103 154 100 154 C97 154 93 151 93 145 Z" fill="#1A1214"></path>
+        <path d="M87 151 Q100 181 113 151 Q100 160 87 151 Z" fill="#4A1E22"></path>
+        <path d="M92 160 Q92 182 100 182 Q108 182 108 160 Q100 164 92 160 Z" fill="#E07A86"></path>
+        <path d="M18 200 C30 180 62 172 100 174 C138 172 170 180 182 200 Z" fill="#500000"></path>
+      </g>
+      <circle cx="100" cy="100" r="97" fill="none" stroke="#FFFFFF" stroke-width="6"></circle>
+    </svg>
+    <div>
+      <div class="wordmark">RevGym Camera</div>
+      <p id="top-line">Your PC sees what this camera sees.</p>
+    </div>
+  </header>
+
+  <!-- Not linked yet -->
+  <main id="pair-view" class="phone-body" hidden>
+    <h1>Link to your PC</h1>
+    <p class="muted">On your PC, click <strong>Link a phone</strong> and scan the QR code with this phone's camera.</p>
+    <p id="pair-status" class="ok" role="status" hidden></p>
+    <p id="pair-error" class="error" role="alert" hidden></p>
+    <details class="manual">
+      <summary>Type the code instead</summary>
+      <form id="pair-form" novalidate style="display:flex;flex-direction:column;gap:14px;margin-top:12px">
+        <label class="field">
+          <span>Code from your PC</span>
+          <input id="code" class="code-input" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="6" required>
+        </label>
+        <button type="submit" id="pair-submit" class="primary">Link phone</button>
+      </form>
+    </details>
+  </main>
+
+  <!-- Linked: live camera -->
+  <main id="camera-view" class="phone-body" hidden>
+    <p class="ok" id="linked-line"></p>
+    <div class="phone-frame">
+      <video id="preview" autoplay playsinline muted aria-label="Camera preview"></video>
+      <span id="phone-rec" class="rec-indicator" hidden>● REC <span id="phone-rec-timer">0:00</span></span>
+      <span id="pc-chip" class="pc-chip">PC not watching yet</span>
+    </div>
+    <p id="camera-error" class="error" role="alert" hidden></p>
+    <button type="button" id="camera-start" class="primary" hidden>Turn on camera</button>
+
+    <label class="field">
+      <span>Lift</span>
+      <select id="exercise">
+        <option value="bench_press">Bench Press</option>
+        <option value="squat">Squat</option>
+        <option value="bicep_curl">Bicep Curl</option>
+        <option value="shoulder_press">Shoulder Press</option>
+        <option value="deadlift">Deadlift</option>
+        <option value="lunge">Lunge</option>
+      </select>
+    </label>
+    <button type="button" id="record" class="record-btn" disabled><span class="record-dot" aria-hidden="true"></span><span id="record-label">Record</span></button>
+    <p class="muted small-text">You can also start and stop recording from your PC. Stand the phone sideways 6–8 ft away with your whole body in frame.</p>
+
+    <input id="file-fallback" type="file" accept="video/*" capture="environment" hidden>
+
+    <div id="upload-box" hidden>
+      <p id="upload-label" class="muted" aria-live="polite"></p>
+      <div class="progress" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progress"><div id="progress-bar"></div></div>
+    </div>
+    <p id="upload-done" class="ok" role="status" hidden>Sent to your PC ✓</p>
+    <p id="upload-error" class="error" role="alert" hidden></p>
+
+    <button type="button" id="unlink" class="link-btn">Unlink this phone</button>
+  </main>
+</div>
+<script src="/static/phone.js"></script>
+</body>
+</html>
