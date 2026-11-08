@@ -40,6 +40,7 @@ const G = 981;                    // cm/s²
 const CALIB_MS = 2000, VIS = 0.5;
 const CLEAR_CM = 6;               // lowest foot point above this = off the floor
 const MAX_FLIGHT_S = 1.2;
+const MAX_FRAME_GAP_MS = 200;
 const NOBODY_RESET_MS = 60000;    // only when there's no phone sensor to say the camera is still
 const MOVED_DEG = 2, MOVED_ROT = 25;
 const REANCHOR_MS = 800;          // feet this still (and legs straight) = standing on the floor
@@ -164,15 +165,16 @@ export function createRoomLock() {
     const oR = median(still.map((p) => dot(avgPx(p.lm, FOOT_PTS, w, h), r)));
     const ratio0 = median(still.map((p) => p.s));
     const eyesU = median(still.map((p) => ([2, 5].some((i) => seen(p.lm, i)) ? dot(avgPx(p.lm, [2, 5], w, h), u) : null)));
+    const usedHeight = heightCm != null && eyesU != null && eyesU > f0;
     let s0 = ratio0, scale = 'body limb lengths (MediaPipe metric estimate)';
-    if (heightCm && eyesU != null) { s0 = (eyesU - f0) / (0.936 * heightCm); scale = `your height (${heightCm} cm)`; }
+    if (usedHeight) { s0 = (eyesU - f0) / (0.936 * heightCm); scale = 'your height'; }
     const hipU = median(still.map((p) => dot(avgPx(p.lm, [23, 24], w, h), u)));
     const sideOn = still[still.length - 1].lm.filter((_, i) => [11, 12, 23, 24, 25, 26, 27, 28].includes(i)).filter((q) => q.visibility < VIS).length >= 2;
     const c = [w / 2, h / 2];
     lock = {
-      n: ++count, at: Date.now(), w, h, u, r, f0, oR, s0, ratio0, cU: dot(c, u), cR: dot(c, r),
+      n: ++count, at: t, w, h, u, r, f0, oR, s0, ratio0, cU: dot(c, u), cR: dot(c, r),
       vertical, scale, view: sideOn ? 'side-on' : 'facing', sensorUp: sensorFresh() ? unit(sensor.up) : null,
-      tiltDeg: sensorFresh() ? sensor.tiltDeg : null, heightCm: heightCm || null,
+      tiltDeg: sensorFresh() ? sensor.tiltDeg : null, usedHeight,
       estHeightCm: eyesU != null ? Math.round((eyesU - f0) / s0 / 0.936) : null,
       hipCm: r1((hipU - f0) / s0),
       legCm: Math.round(median(still.map((p) => Math.max(limb(p.W, p.lm, [23, 25, 27]) ?? 0, limb(p.W, p.lm, [24, 26, 28]) ?? 0)))),
@@ -196,15 +198,17 @@ export function createRoomLock() {
 
   // ---- per frame ----
   function update(tr) {
-    const pose = tr?.pose, t = Date.now(), w = tr?.width, h = tr?.height;
+    const pose = tr?.pose, t = tr?.capturedAt ?? Date.now(), w = tr?.width, h = tr?.height;
     const lm = pose?.rawLandmarks || pose?.landmarks, W = pose?.rawWorldLandmarks || pose?.worldLandmarks;
     const out = { locked: false, joints: null, foot_cm: null, feet: null, dist: null, lock, newJumps: [], note };
     if (!lm || !W || !w || !h) {
       if (lock && !lock.sensorUp && t - lastSeen > NOBODY_RESET_MS) unlock('nobody in view for 60 s (no phone sensor to confirm the camera stayed still)');
-      still = []; prev = null;
+      still = []; prev = null; cand = null; air = null;
       return { ...out, locked: !!lock, lock, note };
     }
+    if (lastSeen && t - lastSeen > MAX_FRAME_GAP_MS) still = [];
     lastSeen = t;
+    if (prev && t - prev.t > MAX_FRAME_GAP_MS) { prev = null; cand = null; air = null; }
     if (lock && (lock.w !== w || lock.h !== h)) unlock('video size changed');
     if (!lock) { if (!pose.predicted) tryLock(t, lm, W, w, h, pose.angles); }
     if (!lock) return { ...out, note };
@@ -351,7 +355,7 @@ export function createRoomLock() {
 
   return {
     update, draw, setSensor, describe,
-    setHeight(cm) { const v = Number(cm); heightCm = v >= 100 && v <= 230 ? v : null; },
+    setHeight(cm) { const v = Number(cm); heightCm = v >= 100 && v <= 245 ? v : null; },
     relock() { unlock(null); },
     get lock() { return lock; },
   };

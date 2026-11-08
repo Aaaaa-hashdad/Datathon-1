@@ -5,6 +5,7 @@
 // so other code can react to movement without touching this file.
 
 import { FilesetResolver, PoseLandmarker, HandLandmarker, HolisticLandmarker } from '/mp/vision_bundle.mjs';
+import { createVideoClock, nextVideoFrame } from './video-frame.mjs';
 
 // ---------- pose skeleton, grouped by body part ----------
 // MediaPipe "left" = the person's left.
@@ -396,8 +397,8 @@ let tsOffset = 0, lastMpT = 0;
 // src: ImageBitmap (picture mode) or <video> (WebRTC, screen, file).
 // clock (ms, optional): the evaluator passes the clip's own time, so motion and timing
 // behave the same however fast it steps through a clip.
-function processFrame(src, w, h, clock) {
-  const t = clock ?? performance.now();
+function processFrame(src, w, h, clock, live = false) {
+  const t = live ? clock - performance.timeOrigin : clock ?? performance.now();
   const tAll = performance.now();
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
 
@@ -406,6 +407,7 @@ function processFrame(src, w, h, clock) {
   if (opts.video) ctx.drawImage(src, 0, 0, w, h);
 
   const out = { t: clock ?? Date.now(), width: w, height: h, pose: null, hands: [], view: 'none' };
+  if (live) out.capturedAt = clock;
 
   if (!pipe) return null;                       // model is (re)loading
   // MediaPipe needs strictly increasing timestamps. Live frames and the evaluator's
@@ -795,14 +797,6 @@ function renderPanel(out) {
 // Video sources (WebRTC / screen / file) are processed once per new video frame;
 // otherwise we fall back to the phone's JPEG pictures, each fetched once.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-function nextVideoFrame(v) {
-  return new Promise((resolve) => {
-    let done = false;
-    const fin = () => { if (!done) { done = true; resolve(); } };
-    if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(fin);
-    setTimeout(fin, 200);                      // paused video: re-check now and then
-  });
-}
 
 // Model choice: "auto" = hybrid (see detectHybrid): the accurate separate body model
 // every frame (~30 fps), Holistic only while that model loses the person (seated,
@@ -824,12 +818,24 @@ if (!pipe) throw new Error('MediaPipe failed to load');
 if (modelSel) modelSel.onchange = autoPipeline;
 
 let after = 0;
+let lastCapture = -Infinity;
+const videoClock = createVideoClock();
+function trackLive(src, width, height, capturedAt) {
+  if (capturedAt === null || capturedAt <= lastCapture) return;
+  lastCapture = capturedAt;
+  processFrame(src, width, height, capturedAt, true);
+}
 for (;;) {
   const v = window.camSource?.activeVideo();
   if (v) {
-    await nextVideoFrame(v);
+    const frame = await nextVideoFrame(v);
     if (window.camSource.activeVideo() === v && v.videoWidth) {
-      try { processFrame(v, v.videoWidth, v.videoHeight); } catch (e) { console.warn('frame failed', e); }
+      const capturedAt = videoClock(v, frame);
+      // File playback can run faster or slower than real time. Its capture clock
+      // should follow presentation time so switching back to the phone stays ordered.
+      const timestamp = capturedAt !== null && window.camSource.mode === 'file'
+        ? performance.timeOrigin + (frame.presentationTime ?? performance.now()) : capturedAt;
+      try { trackLive(v, v.videoWidth, v.videoHeight, timestamp); } catch (e) { console.warn('frame failed', e); }
     }
     continue;
   }
@@ -838,9 +844,10 @@ for (;;) {
   try { res = await fetch(`/next.jpg?after=${after}&wait=500`); } catch { await sleep(1000); continue; }
   if (res.status !== 200) continue;            // 204 = nothing new yet; check sources again
   after = Number(res.headers.get('X-Frame'));
+  const capturedAt = Number(res.headers.get('X-Capture-Time')) || Date.now();
   try {
     const bmp = await createImageBitmap(await res.blob());
-    processFrame(bmp, bmp.width, bmp.height);
-    bmp.close();
+    try { trackLive(bmp, bmp.width, bmp.height, capturedAt); }
+    finally { bmp.close(); }
   } catch (e) { console.warn('frame failed', e); }
 }

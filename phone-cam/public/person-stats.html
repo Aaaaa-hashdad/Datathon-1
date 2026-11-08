@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personal Statistics</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap">
+<script>
+  // Theme comes from RevGym (?theme=dark|light) so the page matches the app around it.
+  const theme = new URLSearchParams(location.search).get('theme');
+  if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme;
+</script>
+<style>
+  /* RevGym tokens (ui/index.html) + the dataviz reference categorical palette (validated, fixed order). */
+  :root {
+    color-scheme: light;
+    --bg: #fdfcfc; --surface: #ffffff; --surface-2: #f6f3f3; --fg: #1e1515; --muted: #6f6262; --line: #ece7e6;
+    --brand: #500000; --on-brand: #ffffff; --accent: #500000; --bad: #b3261e;
+    --grid: #ece7e6; --axis: #b9adac;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s-other: #9b9191;
+    --line-1: #500000;          /* single-series lines: RevGym maroon */
+    --font: "Rubik", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --bg: #000000; --surface: #0f0f0f; --surface-2: #1b1b1b; --fg: #f5f5f5; --muted: #a6a6a6; --line: #2a2a2a;
+      --brand: #5a0a0a; --accent: #e6a6a6; --bad: #f07a70; --grid: #242424; --axis: #4a4a4a;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s-other: #7d7575;
+      --line-1: #e6a6a6;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #000000; --surface: #0f0f0f; --surface-2: #1b1b1b; --fg: #f5f5f5; --muted: #a6a6a6; --line: #2a2a2a;
+    --brand: #5a0a0a; --accent: #e6a6a6; --bad: #f07a70; --grid: #242424; --axis: #4a4a4a;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s-other: #7d7575;
+    --line-1: #e6a6a6;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 var(--font); }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+  h1 { margin: 0; font-size: 26px; font-weight: 700; }
+  h2 { margin: 0 0 4px; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); }
+  .sub { color: var(--muted); font-size: 14px; margin: 2px 0 0; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px; min-width: 0; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px; }
+  .tile .lbl { color: var(--muted); font-size: 13px; }
+  .tile .num { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .tile .num small { font-size: 15px; font-weight: 500; color: var(--muted); }
+  .tile .hint { color: var(--muted); font-size: 12px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 16px; }
+  .chart { position: relative; }
+  .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .chart text { font-family: var(--font); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0 10px; font-size: 13px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+  .chips button { border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 999px; padding: 5px 12px; font: 500 13px var(--font); cursor: pointer; }
+  .chips button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  .tip { position: absolute; pointer-events: none; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 10px;
+    padding: 8px 10px; font-size: 13px; box-shadow: 0 6px 24px rgba(0,0,0,.12); white-space: nowrap; z-index: 2; transform: translate(-50%, calc(-100% - 10px)); }
+  .tip b { font-weight: 600; }
+  .tip .k { color: var(--muted); }
+  .empty { color: var(--muted); font-size: 14px; padding: 18px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 13px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  td.n, th.n { text-align: right; }
+  td:first-child, td.n, th { white-space: nowrap; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 8px; vertical-align: 0; }
+  .sets { display: grid; gap: 8px; }
+  .set { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; display: grid; gap: 6px; }
+  .set-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .set-top b { font-weight: 600; }
+  .set-top .when { color: var(--muted); font-size: 13px; }
+  .set-top .sp { flex: 1; }
+  .badge { font-size: 12px; border-radius: 999px; padding: 2px 9px; background: var(--surface-2); color: var(--muted); }
+  .btn { border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 10px; padding: 6px 12px; font: 600 13px var(--font); cursor: pointer; }
+  .btn.primary { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  details summary { cursor: pointer; color: var(--accent); font-size: 13px; font-weight: 500; }
+  details p, details ul { margin: 6px 0 0; font-size: 14px; }
+  details ul { padding-left: 20px; }
+  .err { color: var(--bad); font-size: 13px; }
+  .table-scroll { overflow-x: auto; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<main id="app">
+  <div><h1>Personal Statistics</h1><p class="sub" id="who">Loading your workouts…</p></div>
+</main>
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const fmtDay = (d) => { const [, m, dd] = d.split('-').map(Number); return `${MONTHS[m - 1]} ${dd}`; };
+const fmtAt = (at) => `${fmtDay(at.slice(0, 10))}, ${at.slice(11, 16)}`;
+const SLOTS = ['--s1', '--s2', '--s3', '--s4', '--s5', '--s6', '--s7'];
+let D = null, colorOf = {}, romPick = null;
+
+// Tell RevGym how tall this page is, so its frame grows with it (no scroll-in-scroll).
+const parentOrigin = document.referrer ? new URL(document.referrer).origin : null;
+const postHeight = () => parentOrigin && window.parent.postMessage({ type: 'person-stats-height', h: document.documentElement.scrollHeight }, parentOrigin);
+new ResizeObserver(postHeight).observe(document.body);
+
+async function load() {
+  try {
+    const r = await fetch('/stats/data');
+    if (!r.ok) throw new Error(r.status === 403 ? 'Open this page from RevGym.' : `Error ${r.status}`);
+    D = await r.json();
+    // Colour follows the exercise: fixed slot by overall rank, 8th+ fold into "Other".
+    colorOf = {};
+    D.exercises.forEach((e, i) => { colorOf[e.name] = i < SLOTS.length ? `var(${SLOTS[i]})` : 'var(--s-other)'; });
+    if (!romPick || !D.rom[romPick]) romPick = D.exercises.find((e) => D.rom[e.name]?.length)?.name || null;
+    render();
+  } catch (e) {
+    $('#app').innerHTML = `<div><h1>Personal Statistics</h1><p class="err">${esc(e.message)}</p></div>`;
+  }
+}
+
+function render() {
+  const t = D.totals;
+  const notYet = t.sets - t.analyzed;
+  $('#app').innerHTML = `
+    <div><h1>Personal Statistics</h1>
+      <p class="sub">${esc(D.user)} · ${t.sets ? `${t.sets} set${t.sets === 1 ? '' : 's'} recorded over ${t.days} day${t.days === 1 ? '' : 's'}` : 'nothing recorded yet'}${notYet ? ` · ${notYet} not analysed yet` : ''}</p></div>
+    <section class="tiles" aria-label="Totals">
+      ${tile('Active days', t.days)}
+      ${tile('Sets', t.sets, t.analyzed < t.sets ? `${t.analyzed} analysed` : '')}
+      ${tile('Reps', t.reps, t.analyzed ? 'in analysed sets' : 'analyse a set to count reps')}
+      ${tile('Time moving', t.minutes, '', 'min')}
+      ${tile('Best jump', t.bestJumpCm ?? '–', t.jumps ? `${t.jumps} jump${t.jumps === 1 ? '' : 's'} measured` : 'no jumps yet', t.bestJumpCm != null ? 'cm' : '')}
+    </section>
+    ${t.sets ? '' : `<section class="card"><p class="empty">No sets yet. Go to Record, choose My phone, and do a set: it shows up here.</p></section>`}
+    <div class="grid2">
+      <section class="card"><h2>Reps per day</h2><div id="repsLegend" class="legend"></div><div class="chart" id="repsChart"></div></section>
+      <section class="card"><h2>Range of motion</h2><div class="chips" id="romChips"></div><div class="chart" id="romChart"></div></section>
+    </div>
+    ${D.jumps.length ? '<section class="card"><h2>Jump height</h2><div class="chart" id="jumpChart"></div></section>' : ''}
+    <section class="card"><h2>Exercises</h2><div class="table-scroll" id="exTable"></div></section>
+    <section class="card"><h2>Your sets</h2><div class="sets" id="setList"></div></section>`;
+  drawReps(); drawRom(); if (D.jumps.length) drawJumps(); drawTable(); drawSets();
+  postHeight();
+}
+
+function tile(label, num, hint = '', unit = '') {
+  return `<div class="tile"><div class="lbl">${esc(label)}</div><div class="num">${esc(num)}${unit ? ` <small>${unit}</small>` : ''}</div>${hint ? `<div class="hint">${esc(hint)}</div>` : ''}</div>`;
+}
+
+// ---------- chart helpers ----------
+const W = (el) => Math.max(280, el.clientWidth);
+function niceMax(v) { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)); const m = v / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; }
+function axisY(max, x0, x1, yOf, unit = '') {
+  let s = '';
+  for (let i = 0; i <= 4; i++) {
+    const v = (max / 4) * i, y = yOf(v);
+    s += `<line x1="${x0}" x2="${x1}" y1="${y}" y2="${y}" stroke="var(--grid)" stroke-width="1"/>`
+      + `<text x="${x0 - 8}" y="${y + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${Math.round(v)}${unit}</text>`;
+  }
+  return s;
+}
+function tooltip(host, html, x, y) {
+  let tip = host.querySelector('.tip');
+  if (!tip) { tip = document.createElement('div'); tip.className = 'tip'; host.appendChild(tip); }
+  if (!html) { tip.remove(); return; }
+  tip.innerHTML = html;
+  const w = host.clientWidth;
+  tip.style.left = `${Math.min(Math.max(x, 70), w - 70)}px`;
+  tip.style.top = `${y}px`;
+}
+
+// Reps per day: stacked bars by exercise (identity → categorical colour, fixed order).
+function drawReps() {
+  const host = $('#repsChart'), legend = $('#repsLegend');
+  const days = D.daily.slice(-21);
+  const names = D.exercises.map((e) => e.name);
+  const totalOf = (d) => names.reduce((p, n) => p + (d.reps[n] || 0), 0);
+  if (!days.some((d) => totalOf(d) > 0)) {
+    legend.innerHTML = '';
+    host.innerHTML = `<p class="empty">${D.totals.sets ? 'Analyse a set (button below) and Claude counts the reps for this chart.' : 'Your reps will show here.'}</p>`;
+    return;
+  }
+  const shown = names.filter((n) => days.some((d) => d.reps[n]));
+  legend.innerHTML = shown.map((n) => `<span><i style="background:${colorOf[n]}"></i>${esc(cap(n))}</span>`).join('');
+  const w = W(host), h = 230, L = 40, R = 8, T = 10, B = 28;
+  const max = niceMax(Math.max(...days.map(totalOf)));
+  const yOf = (v) => T + (h - T - B) * (1 - v / max);
+  const step = (w - L - R) / days.length, bw = Math.min(36, step * 0.6);
+  let bars = '';
+  days.forEach((d, i) => {
+    const cx = L + step * (i + 0.5);
+    let acc = 0;
+    const segs = shown.filter((n) => d.reps[n]);
+    segs.forEach((n, j) => {
+      const v = d.reps[n], y1 = yOf(acc), y0 = yOf(acc + v);
+      const gap = j < segs.length - 1 ? 2 : 0;                  // 2px surface gap between stacked fills
+      const top = j === segs.length - 1;
+      const hh = Math.max(1, y1 - y0 - gap);
+      bars += top
+        ? `<path d="M${cx - bw / 2},${y0 + hh} v${-(hh - 4)} q0,-4 4,-4 h${bw - 8} q4,0 4,4 v${hh - 4} z" fill="${colorOf[n]}"/>`
+        : `<rect x="${cx - bw / 2}" y="${y0 + gap}" width="${bw}" height="${hh}" fill="${colorOf[n]}"/>`;
+      acc += v;
+    });
+    const lbl = days.length <= 10 || i % Math.ceil(days.length / 8) === 0 ? `<text x="${cx}" y="${h - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">${fmtDay(d.day)}</text>` : '';
+    bars += lbl + `<rect class="hit" data-i="${i}" x="${cx - step / 2}" y="${T}" width="${step}" height="${h - T - B}" fill="transparent"/>`;
+  });
+  host.innerHTML = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Reps per day by exercise">${axisY(max, L, w - R, yOf)}
+    <line x1="${L}" x2="${w - R}" y1="${yOf(0)}" y2="${yOf(0)}" stroke="var(--axis)"/>${bars}</svg>
+    <table class="sr"><tr><th>Day</th>${shown.map((n) => `<th>${esc(n)}</th>`).join('')}</tr>${days.map((d) => `<tr><td>${d.day}</td>${shown.map((n) => `<td>${d.reps[n] || 0}</td>`).join('')}</tr>`).join('')}</table>`;
+  host.querySelectorAll('.hit').forEach((r) => {
+    r.addEventListener('mousemove', (e) => {
+      const d = days[r.dataset.i], box = host.getBoundingClientRect();
+      const rows = shown.filter((n) => d.reps[n]).map((n) => `<div><span class="swatch" style="background:${colorOf[n]}"></span>${esc(cap(n))} <b>${d.reps[n]}</b></div>`).join('');
+      tooltip(host, `<b>${fmtDay(d.day)}</b> · ${d.sets} set${d.sets === 1 ? '' : 's'} · ${d.minutes} min${rows || '<div class="k">No analysed sets</div>'}`, e.clientX - box.left, e.clientY - box.top);
+    });
+    r.addEventListener('mouseleave', () => tooltip(host, null));
+  });
+}
+
+// Range of motion of the exercise's main joint, set by set (single series → one colour, no legend).
+function drawRom() {
+  const chips = $('#romChips'), host = $('#romChart');
+  const options = D.exercises.filter((e) => D.rom[e.name]?.length).map((e) => e.name);
+  chips.innerHTML = options.map((n) => `<button type="button" data-ex="${esc(n)}" aria-pressed="${n === romPick}">${esc(cap(n))}</button>`).join('');
+  chips.onclick = (e) => { const b = e.target.closest('[data-ex]'); if (b) { romPick = b.dataset.ex; drawRom(); postHeight(); } };
+  const pts = romPick ? D.rom[romPick] : null;
+  if (!pts?.length) { host.innerHTML = '<p class="empty">Analysed sets show how far your main joint moves, set by set.</p>'; return; }
+  const w = W(host), h = 230, L = 40, R = 14, T = 12, B = 28;
+  const max = Math.max(80, Math.ceil((Math.max(...pts.map((p) => p.range)) * 1.1) / 40) * 40);   // 4 ticks of a round 10-40°
+  // All on one day → label sets by time; otherwise by day.
+  const oneDay = new Set(pts.map((p) => p.at.slice(0, 10))).size === 1;
+  const xLabel = (p) => (oneDay ? p.at.slice(11, 16) : fmtDay(p.at.slice(0, 10)));
+  const yOf = (v) => T + (h - T - B) * (1 - v / max);
+  const xOf = (i) => (pts.length === 1 ? (L + w - R) / 2 : L + (w - L - R) * (i / (pts.length - 1)));
+  const path = pts.map((p, i) => `${i ? 'L' : 'M'}${xOf(i)},${yOf(p.range)}`).join(' ');
+  const dots = pts.map((p, i) => `<circle cx="${xOf(i)}" cy="${yOf(p.range)}" r="4.5" fill="var(--line-1)" stroke="var(--surface)" stroke-width="2"/>`).join('');
+  const labels = pts.map((p, i) => (pts.length <= 8 || i % Math.ceil(pts.length / 6) === 0 || i === pts.length - 1
+    ? `<text x="${xOf(i)}" y="${h - 8}" text-anchor="${pts.length > 1 && i === 0 ? 'start' : pts.length > 1 && i === pts.length - 1 ? 'end' : 'middle'}" font-size="11" fill="var(--muted)">${xLabel(p)}</text>` : '')).join('');
+  const last = pts[pts.length - 1];
+  host.innerHTML = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Range of motion per set for ${esc(romPick)}">${axisY(max, L, w - R, yOf, '°')}
+    <line x1="${L}" x2="${w - R}" y1="${yOf(0)}" y2="${yOf(0)}" stroke="var(--axis)"/>
+    <path d="${path}" fill="none" stroke="var(--line-1)" stroke-width="2" stroke-linejoin="round"/>${dots}${labels}
+    <text x="${xOf(pts.length - 1)}" y="${yOf(last.range) - 12}" text-anchor="${pts.length === 1 ? 'middle' : 'end'}" font-size="12" font-weight="600" fill="var(--fg)">${last.range}°</text>
+    <line id="xh" y1="${T}" y2="${yOf(0)}" stroke="var(--axis)" stroke-dasharray="3 3" visibility="hidden"/>
+    <rect id="romHit" x="${L}" y="${T}" width="${w - L - R}" height="${h - T - B}" fill="transparent"/></svg>
+    <p class="sub" style="font-size:13px">${esc(last.joint || 'Main joint')}: degrees between its most bent and most straight point in each set. Higher = fuller range.</p>`;
+  const hit = $('#romHit', host), xh = $('#xh', host);
+  hit.addEventListener('mousemove', (e) => {
+    const box = host.getBoundingClientRect(), sx = (e.clientX - box.left) * (w / box.width);
+    let i = 0; pts.forEach((_, j) => { if (Math.abs(xOf(j) - sx) < Math.abs(xOf(i) - sx)) i = j; });
+    const p = pts[i];
+    xh.setAttribute('x1', xOf(i)); xh.setAttribute('x2', xOf(i)); xh.setAttribute('visibility', 'visible');
+    tooltip(host, `<b>${fmtAt(p.at)}</b><div>Range <b>${p.range}°</b> <span class="k">(${Math.round(p.min)}° → ${Math.round(p.max)}°)</span></div><div class="k">${esc(p.joint || '')}${p.reps ? ` · ${p.reps} reps` : ''}</div>`,
+      xOf(i) * (box.width / w), yOf(p.range) * (box.height / h));
+  });
+  hit.addEventListener('mouseleave', () => { xh.setAttribute('visibility', 'hidden'); tooltip(host, null); });
+}
+
+// Every trustworthy jump (quality "ok"), in order; dots, best one labelled.
+function drawJumps() {
+  const host = $('#jumpChart'), js = D.jumps;
+  const w = W(host), h = 200, L = 40, R = 14, T = 12, B = 28;
+  const max = Math.max(20, Math.ceil((Math.max(...js.map((j) => j.cm)) * 1.15) / 20) * 20);   // 4 ticks of round 5-cm steps
+  const yOf = (v) => T + (h - T - B) * (1 - v / max);
+  const xOf = (i) => (js.length === 1 ? (L + w - R) / 2 : L + (w - L - R) * (i / (js.length - 1)));
+  const best = js.reduce((b, j, i) => (j.cm > js[b].cm ? i : b), 0);
+  const dots = js.map((j, i) => `<circle class="jd" data-i="${i}" cx="${xOf(i)}" cy="${yOf(j.cm)}" r="5" fill="var(--line-1)" stroke="var(--surface)" stroke-width="2"/>`).join('');
+  const days = [...new Set(js.map((j) => j.day))];
+  const dayLbl = days.map((d) => { const i = js.findIndex((j) => j.day === d); return `<text x="${xOf(i)}" y="${h - 8}" text-anchor="${i === 0 && js.length > 1 ? 'start' : 'middle'}" font-size="11" fill="var(--muted)">${fmtDay(d)}</text>`; }).join('');
+  host.innerHTML = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Jump heights">${axisY(max, L, w - R, yOf, '')}
+    <line x1="${L}" x2="${w - R}" y1="${yOf(0)}" y2="${yOf(0)}" stroke="var(--axis)"/>${dots}${dayLbl}
+    <text x="${xOf(best)}" y="${yOf(js[best].cm) - 12}" text-anchor="middle" font-size="12" font-weight="600" fill="var(--fg)">Best ${Math.round(js[best].cm)} cm</text></svg>
+    <p class="sub" style="font-size:13px">Height in cm from time in the air. Only jumps the app trusts are shown.</p>`;
+  host.querySelectorAll('.jd').forEach((c) => {
+    c.style.cursor = 'default';
+    c.addEventListener('mouseenter', () => {
+      const j = js[c.dataset.i], box = host.getBoundingClientRect();
+      tooltip(host, `<b>${Math.round(j.cm * 10) / 10} cm</b><div class="k">${fmtAt(j.at)} · feet ${Math.round(j.feet)} cm</div>`, xOf(c.dataset.i) * (box.width / w), yOf(j.cm) * (box.height / h));
+    });
+    c.addEventListener('mouseleave', () => tooltip(host, null));
+  });
+}
+
+function drawTable() {
+  const host = $('#exTable');
+  if (!D.exercises.length) { host.innerHTML = '<p class="empty">Exercises appear here once a set is analysed.</p>'; return; }
+  host.innerHTML = `<table><thead><tr><th>Exercise</th><th class="n">Sets</th><th class="n">Reps</th><th class="n">Best range</th><th class="n">Tempo</th><th class="n">Form score</th><th>Last done</th></tr></thead><tbody>
+    ${D.exercises.map((e) => `<tr><td><span class="swatch" style="background:${colorOf[e.name]}"></span>${esc(cap(e.name))}</td><td class="n">${e.sets}</td><td class="n">${e.reps}</td>
+      <td class="n">${e.bestRangeDeg != null ? `${e.bestRangeDeg}°` : '–'}</td><td class="n">${e.avgSecPerRep != null ? `${e.avgSecPerRep} s/rep` : '–'}</td>
+      <td class="n">${e.avgScore != null ? `${e.avgScore}/10` : '–'}</td><td>${e.last ? fmtDay(e.last) : '–'}</td></tr>`).join('')}</tbody></table>`;
+}
+
+// Claude's feedback text → paragraphs and a list (same shape as Form Check).
+function feedbackHtml(text) {
+  let html = '', list = [];
+  const flush = () => { if (list.length) { html += `<ul>${list.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`; list = []; } };
+  for (const l of String(text || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean)) {
+    if (/^[-•*]\s+/.test(l)) list.push(l.replace(/^[-•*]\s+/, '')); else { flush(); html += `<p>${esc(l.replace(/\*\*/g, ''))}</p>`; }
+  }
+  flush();
+  return html;
+}
+
+function drawSets() {
+  const host = $('#setList');
+  const list = D.sets.slice(0, 40);
+  if (!list.length) { host.innerHTML = '<p class="empty">Your sets will be listed here.</p>'; return; }
+  host.innerHTML = list.map((s) => {
+    const a = s.analysis, items = a?.items || [];
+    // every exercise in the set (curls then squats … each listed)
+    const what = items.length
+      ? items.map((it) => `<span><span class="swatch" style="background:${colorOf[it.exercise]}"></span><b>${esc(cap(it.exercise))}</b>${it.reps != null ? ` · ${it.reps} reps` : ''}${it.score ? ` <span class="badge">form ${it.score}/10</span>` : ''}</span>`).join('<span class="when">then</span>')
+      : a ? '<b>No exercise detected</b>' : '<b>Not analysed yet</b>';
+    const extra = s.jumps ? `<span class="badge">${s.jumps} jump${s.jumps === 1 ? '' : 's'}</span>` : '';
+    return `<div class="set" data-id="${esc(s.id)}">
+      <div class="set-top">${what}
+        <span class="when">${fmtAt(s.at)} · ${s.seconds} s</span>${extra}<span class="sp"></span>
+        ${a ? '' : `<button class="btn primary" type="button" data-analyze="${esc(s.id)}">Analyze</button>`}</div>
+      ${a?.text ? `<details><summary>Claude's feedback</summary>${feedbackHtml(a.text)}</details>` : ''}
+      <div class="err" hidden></div></div>`;
+  }).join('') + (D.sets.length > list.length ? `<p class="sub">Showing your latest ${list.length} of ${D.sets.length} sets.</p>` : '');
+  host.onclick = async (e) => {
+    const b = e.target.closest('[data-analyze]'); if (!b) return;
+    const card = b.closest('.set'), err = $('.err', card);
+    host.querySelectorAll('[data-analyze]').forEach((x) => { x.disabled = true; });
+    b.textContent = 'Claude is reading this set…'; err.hidden = true;
+    try {
+      const r = await (await fetch(`/stats/analyze?set=${encodeURIComponent(b.dataset.analyze)}`, { method: 'POST' })).json();
+      if (!r.ok) throw new Error(r.error || 'Could not analyse this set.');
+      await load();
+    } catch (x) {
+      err.textContent = x.message; err.hidden = false; b.textContent = 'Analyze';
+      host.querySelectorAll('[data-analyze]').forEach((y) => { y.disabled = false; });
+      postHeight();
+    }
+  };
+}
+
+let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => D && render(), 150); });
+load();
+</script>
+</body>
+</html>

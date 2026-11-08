@@ -184,6 +184,7 @@
   const $ = (sel, root = document) => root.querySelector(sel);
 
   const ICONS = {
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>',
     camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
     trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0zM8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8 20h8M9 17h6"/>',
     calendar: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
@@ -200,6 +201,7 @@
     spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/>',
     up: '<path d="M6 15l6-6 6 6"/>',
     chart: '<path d="M4 19h16M6 16l4-5 3 3 5-7"/>',
+    file: '<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/>',
     dumbbell: '<path d="M3 10v4M6 7v10M18 7v10M21 10v4M6 12h12"/>',
     info: '<circle cx="12" cy="12" r="8"/><path d="M12 11v5M12 8h.01"/>',
     send: '<path d="M4 12l16-7-6 16-3-6z"/>',
@@ -280,50 +282,61 @@
      ================================================================= */
 
   /* ---------------- 4a. Record / Form check ---------------- */
+  const phoneCamPort = document.querySelector('meta[name="phone-cam-port"]')?.content;
+  const phoneCamOrigin = phoneCamPort && ['127.0.0.1', 'localhost'].includes(location.hostname)
+    ? new URL(`http://${location.hostname}:${phoneCamPort}`).origin : null;
+
   const RecordScreen = (() => {
     let el, exerciseId = 'squat', status = 'idle', stream = null, facing = 'environment';
     let camSource = 'device', pair = { state: 'idle' }, phoneLink = null;   // phone-as-camera state
+    const cameraSourceKey = 'revgym-camera-source';
+    if (phoneCamOrigin) {
+      try { if (localStorage.getItem(cameraSourceKey) === 'phone') camSource = 'phone'; } catch {}
+    }
     let raf = 0, t0 = 0, elapsed = 0, reps = 0, nextRepAt = 0, tick = 0, countdownTimer = 0;
+    let phoneFeedTimer, cameraRequest = 0;
     const REP_SEC = 2.6;
     const idleLabel = () => (matchMedia('(max-width: 700px)').matches ? 'Tap Record to start a set' : 'Click Record or press Space to start');
     const CUES = { good: ['Depth looks good', 'Bar path steady', 'Nice tempo', 'Strong lockout', 'Stay braced'], warn: ['Knees drifting in', 'Slow the descent', 'Chest is dropping', 'Finish the rep'] };
 
     async function render(root) {
       el = root; status = 'idle';
-      const exercises = await Api.getExercises();
-      if (camSource === 'phone') pair = await Api.getPairingStatus();
-      if (pair.state === 'idle') camSource = 'device';
+      const exercises = phoneCamOrigin ? [] : await Api.getExercises();
+      if (!phoneCamOrigin) {
+        if (camSource === 'phone') pair = await Api.getPairingStatus();
+        if (pair.state === 'idle') camSource = 'device';
+      }
       el.innerHTML = `
         <div class="rec-wrap">
-          <div class="topbar gutter">
-            <h1>Form Check</h1>
-            <span class="pill neutral" id="camState">Demo feed</span>
+          <div class="topbar gutter${phoneCamOrigin ? ' rec-camera-status' : ''}">
+            ${phoneCamOrigin ? '' : '<h1>Form Check</h1>'}
+            <span class="pill neutral" id="camState" role="status">${phoneCamOrigin ? 'Camera off' : 'Demo feed'}</span>
           </div>
           <div class="rec-body gutter-desk">
           <div class="viewfinder" id="vf">
             <video id="video" playsinline muted hidden></video>
-            <canvas class="pose" id="pose"></canvas>
+            ${phoneCamOrigin ? '' : '<canvas class="pose" id="pose"></canvas>'}
             <div class="vf-grid"></div>
             <div class="vf-corners"><i></i><i></i><i></i><i></i></div>
-            <div class="vf-top">
+            ${phoneCamOrigin ? '' : `<div class="vf-top">
               <span class="vf-pill" id="vfStatus">${esc(exById(exerciseId).name)}</span>
               <span class="vf-pill num" id="vfTimer" hidden>00:00</span>
-            </div>
+            </div>`}
             <div class="vf-wait" id="vfWait" hidden>${icon('phone')}<b>Waiting for your phone\u2026</b><span>Scan the code on the right, or type it into the app on your phone.</span></div>
-            <div class="vf-hint" id="vfHint">Stand side-on, 6–10 ft from your camera,<br>with your whole body in frame.</div>
+            ${phoneCamOrigin ? '' : `<div class="vf-hint" id="vfHint">Stand side-on, 6–10 ft from your camera,<br>with your whole body in frame.</div>
             <div class="vf-stats" id="vfStats" hidden>
               <div class="vf-reps num"><span id="vfReps">0</span><small>reps</small></div>
               <div class="vf-cue" id="vfCue"><span class="lamp"></span><span id="vfCueText">Tracking…</span></div>
-            </div>
+            </div>`}
           </div>
           <div class="rec-panel">
-          <div class="gutter" style="padding-top:12px">
+          ${phoneCamOrigin ? '' : `<div class="gutter" style="padding-top:12px">
             <div class="lbl-desk">Exercise</div>
             <div class="chips" role="group" aria-label="Exercise" id="exChips">
               ${exercises.map((e) => `<button class="chip" data-ex="${e.id}" aria-pressed="${e.id === exerciseId}">${esc(e.short)}</button>`).join('')}
             </div>
-          </div>
-          <div class="gutter only-pc" style="padding-top:4px">
+          </div>`}
+          <div class="gutter${phoneCamOrigin ? '' : ' only-pc'}" style="padding-top:4px">
             <div class="lbl-desk">Camera</div>
             <div class="seg" id="camSrc" role="group" aria-label="Camera source">
               <button data-src="device" aria-pressed="true">This device</button>
@@ -332,51 +345,136 @@
           </div>
           <div class="rec-controls gutter">
             <button class="side" id="camBtn" type="button"><span class="icon-btn">${icon('camera')}</span><span id="camBtnLabel">Use camera</span></button>
-            <button class="rec-btn" id="recBtn" type="button" aria-label="Start recording"><span></span></button>
-            <button class="side" id="sampleBtn" type="button"><span class="icon-btn">${icon('spark')}</span>Sample result</button>
+            <button class="rec-btn" id="recBtn" type="button" aria-label="Start recording"${phoneCamOrigin ? ' disabled' : ''}><span></span></button>
+            ${phoneCamOrigin ? '' : `<button class="side" id="sampleBtn" type="button"><span class="icon-btn">${icon('spark')}</span>Sample result</button>`}
           </div>
-          <div class="rec-label" id="recLabel">${idleLabel()}</div>
-          <section class="card pair only-pc" id="pairCard" hidden></section>
-          <div class="gutter only-phone"><section class="card phone-link" id="phoneLink"></section></div>
+          <div class="rec-label" id="recLabel">${phoneCamOrigin ? 'Live camera preview' : idleLabel()}</div>
+          <section class="card pair${phoneCamOrigin ? '' : ' only-pc'}" id="pairCard" hidden></section>
+          ${phoneCamOrigin ? `<section class="card set-feedback" id="feedbackCard" hidden>
+            <h2>Set feedback</h2>
+            <div id="fbText" aria-live="polite"><p class="small muted">Do one set, rest for 10 seconds, then press Get feedback.</p></div>
+            <button class="btn primary" id="fbBtn" type="button">Get feedback</button>
+          </section>` : ''}
+          ${phoneCamOrigin ? '' : '<div class="gutter only-phone"><section class="card phone-link" id="phoneLink"></section></div>'}
           <section class="card rec-guide">
             <h2>Before you record</h2>
             <ol>
-              <li>Set your webcam or laptop side-on, 6–10 ft away.</li>
+              <li>Set your camera side-on, 6–10 ft away.</li>
               <li>Keep your whole body and the bar in frame.</li>
               <li>Face the light. A bright window behind you hides your joints.</li>
               <li>Record one set at a time.</li>
             </ol>
-            <p class="small muted">Press <kbd>Space</kbd> to start or stop recording.</p>
+            ${phoneCamOrigin ? '' : '<p class="small muted">Press <kbd>Space</kbd> to start or stop recording.</p>'}
           </section>
           </div>
           </div>
         </div>`;
-      document.removeEventListener('keydown', onKey);
-      document.addEventListener('keydown', onKey);
-
-      el.querySelector('#exChips').addEventListener('click', (e) => {
-        const b = e.target.closest('[data-ex]'); if (!b || status !== 'idle') return;
-        exerciseId = b.dataset.ex;
-        el.querySelectorAll('[data-ex]').forEach((x) => x.setAttribute('aria-pressed', x === b));
-        $('#vfStatus', el).textContent = exById(exerciseId).name;
-      });
-      $('#recBtn', el).addEventListener('click', () => (status === 'idle' ? startCountdown() : status === 'recording' ? stop() : null));
       $('#camBtn', el).addEventListener('click', toggleCamera);
       $('#camSrc', el).addEventListener('click', (e) => { const b = e.target.closest('[data-src]'); if (b && b.dataset.src !== camSource) setSource(b.dataset.src); });
       $('#pairCard', el).addEventListener('click', onPairClick);
-      $('#phoneLink', el).addEventListener('click', onPhoneLinkClick);
-      paintSource(); paintPhoneLink();
-      $('#sampleBtn', el).addEventListener('click', () => finish(8, 22, 42));
+      if (phoneCamOrigin) {
+        window.addEventListener('message', onPhoneCamStatus);
+        $('#fbBtn', el).addEventListener('click', requestFeedback);
+        if (camSource === 'phone') setSource('phone');
+        else paintLiveCamera();
+      } else {
+        document.addEventListener('keydown', onKey);
+        $('#exChips', el).addEventListener('click', (e) => {
+          const b = e.target.closest('[data-ex]'); if (!b || status !== 'idle') return;
+          exerciseId = b.dataset.ex;
+          el.querySelectorAll('[data-ex]').forEach((x) => x.setAttribute('aria-pressed', x === b));
+          $('#vfStatus', el).textContent = exById(exerciseId).name;
+        });
+        $('#recBtn', el).addEventListener('click', () => (status === 'idle' ? startCountdown() : status === 'recording' ? stop() : null));
+        $('#phoneLink', el).addEventListener('click', onPhoneLinkClick);
+        paintSource(); paintPhoneLink();
+        $('#sampleBtn', el).addEventListener('click', () => finish(8, 22, 42));
+        loop();
+      }
       if (stream) attachStream();
-      loop();
     }
 
     /* ---- phone as camera: laptop side ---- */
     async function setSource(src) {
       if (status !== 'idle') return;
       camSource = src;
+      if (phoneCamOrigin) {
+        try { localStorage.setItem(cameraSourceKey, src); } catch {}
+        stopStream();
+        clearTimeout(phoneFeedTimer);
+        $('#phoneFeed', el)?.remove();
+        if (src === 'phone') {
+          pair = { state: 'loading' };
+          const frame = document.createElement('iframe');
+          frame.id = 'phoneFeed';
+          frame.title = 'Live phone camera with body tracking';
+          frame.tabIndex = -1;
+          frame.referrerPolicy = 'origin';
+          frame.src = phoneCamOrigin + '/form-check';
+          $('#vf', el).prepend(frame);
+          phoneFeedTimer = setTimeout(() => {
+            pair = { state: 'unavailable' };
+            paintLiveCamera();
+          }, 8000);
+        }
+        paintLiveCamera();
+        return;
+      }
       if (src === 'phone') pair = await Api.createPairing(); else { await Api.endPairing(); pair = { state: 'idle' }; }
       paintSource();
+    }
+
+    function onPhoneCamStatus(event) {
+      const frame = $('#phoneFeed', el);
+      if (!frame || event.source !== frame.contentWindow || event.origin !== phoneCamOrigin) return;
+      const data = event.data;
+      if (data?.type === 'phone-cam-feedback') return showFeedback(data);
+      if (data?.type !== 'phone-cam-status' || !Array.isArray(data.phoneUrls)) return;
+      clearTimeout(phoneFeedTimer);
+      const url = data.phoneUrls.find((item) => typeof item === 'string' && item.startsWith('https://'));
+      const state = data.connected ? 'connected' : data.reconnecting ? 'reconnecting' : 'waiting';
+      const calibration = data.calibration;
+      if (pair.state === state && pair.url === url && pair.calibration === calibration) return;
+      pair = { state, url, calibration };
+      paintLiveCamera();
+    }
+
+    function paintLiveCamera() {
+      const phone = camSource === 'phone';
+      const connected = phone ? pair.state === 'connected' : !!stream;
+      const reconnecting = phone && pair.state === 'reconnecting';
+      const statusLabel = {
+        loading: 'Starting Phone Cam…', waiting: 'Waiting for your phone…',
+        connected: 'Phone connected', reconnecting: 'Reconnecting…', unavailable: 'Phone Cam unavailable',
+      };
+      const label = phone ? statusLabel[pair.state] : connected ? 'Camera on' : 'Camera off';
+      const cameraStatus = $('#camState', el);
+      cameraStatus.textContent = label;
+      cameraStatus.className = 'pill ' + (connected ? 'good' : phone ? 'warn' : 'neutral');
+      el.querySelectorAll('[data-src]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.src === camSource));
+      const wait = $('#vfWait', el);
+      wait.hidden = connected || reconnecting;
+      $('b', wait).textContent = label;
+      $('span', wait).textContent = phone
+        ? (pair.state === 'unavailable' ? 'Restart the app with npm start and sign in again.' : 'Scan the QR code and tap Start streaming on your phone.')
+        : 'Use this device’s camera or choose My phone.';
+      $('#camBtn', el).style.visibility = phone ? 'hidden' : '';
+      $('#camBtnLabel', el).textContent = stream ? 'Flip camera' : 'Use camera';
+      $('#camBtn .icon-btn', el).innerHTML = icon(stream ? 'flip' : 'camera');
+      const card = $('#pairCard', el);
+      card.hidden = !phone;
+      const fbCard = $('#feedbackCard', el);
+      if (fbCard) fbCard.hidden = !phone;
+      if (!phone) return;
+      const qr = pair.url && !connected && !reconnecting
+        ? `<div class="qr"><img alt="Scan to open the phone camera" src="${phoneCamOrigin}/qr.svg?url=${encodeURIComponent(pair.url)}"></div><p class="small muted">Use the same Wi-Fi as this PC, then tap <b>Start streaming</b> on your phone.</p>`
+        : pair.state === 'waiting' ? '<p class="small muted">Connect this PC and your phone to the same Wi-Fi to get a QR code.</p>' : '';
+      const roomStatus = pair.calibration === 'profile' ? 'Room locked using your profile height.'
+        : pair.calibration === 'estimated' ? 'Room locked using an estimated scale.'
+        : 'Put the phone on a stand and stand still for 2 seconds with your whole body and feet in view.';
+      card.innerHTML = `<h2>${connected || reconnecting ? label : 'Connect your phone'}</h2>${qr}
+        ${connected ? `<p class="small muted" role="status">${roomStatus}</p>` : ''}
+        <button class="btn" data-pair="back" type="button">Back to this device</button>`;
     }
     function paintSource() {
       if (!el || !el.isConnected) return;
@@ -403,6 +501,7 @@
     }
     async function onPairClick(e) {
       const b = e.target.closest('[data-pair]'); if (!b) return;
+      if (phoneCamOrigin) return setSource('device');
       if (b.dataset.pair === 'sim') { pair = await Api.simulatePhoneJoined(); paintSource(); toast('Phone connected', `${pair.device.name} is now your camera.`); }
       else { await Api.endPairing(); pair = { state: 'idle' }; camSource = 'device'; paintSource(); if (b.dataset.pair === 'disconnect') toast('Phone disconnected', 'Back to this device\u2019s camera.'); }
     }
@@ -435,6 +534,7 @@
     }
 
     async function toggleCamera() {
+      const video = $('#video', el);
       if (stream) { // flip between front and back camera
         facing = facing === 'environment' ? 'user' : 'environment';
         stopStream();
@@ -443,23 +543,39 @@
         toggleCamera.used = true;
         facing = matchMedia('(pointer: fine)').matches ? 'user' : 'environment';
       }
+      const request = ++cameraRequest;
       try {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error('unsupported');
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
+        const camera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
+        if (request !== cameraRequest || !video.isConnected || camSource !== 'device') {
+          camera.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        stream = camera;
         attachStream();
       } catch (err) {
+        if (request !== cameraRequest || !video.isConnected) return;
         stream = null;
-        toast('Camera isn’t available here', 'Showing the demo feed instead. Open the prototype from a local copy in Chrome or Edge to use your webcam.');
+        if (phoneCamOrigin) {
+          paintLiveCamera();
+          toast('Camera isn’t available here', 'Check camera permissions or choose My phone.');
+        } else toast('Camera isn’t available here', 'Showing the demo feed instead. Open the prototype from a local copy in Chrome or Edge to use your webcam.');
       }
     }
     function attachStream() {
       const v = $('#video', el); if (!v) return;
       v.srcObject = stream; v.hidden = false; v.classList.toggle('mirror', facing === 'user'); v.play().catch(() => {});
+      if (phoneCamOrigin) return paintLiveCamera();
       $('#camState', el).textContent = 'Camera on'; $('#camState', el).className = 'pill good';
       $('#camBtnLabel', el).textContent = 'Flip camera';
       $('#camBtn .icon-btn', el).innerHTML = icon('flip');
     }
-    function stopStream() { stream?.getTracks().forEach((t) => t.stop()); stream = null; }
+    function stopStream() {
+      cameraRequest++;
+      stream?.getTracks().forEach((t) => t.stop()); stream = null;
+      const video = $('#video', el);
+      if (video) { video.srcObject = null; video.hidden = true; }
+    }
 
     function startCountdown() {
       if (camSource === 'phone' && pair.state !== 'connected') { toast('Connect your phone first', 'Scan the code, or choose This device to use this computer\u2019s camera.'); return; }
@@ -585,7 +701,52 @@
       if (live) { ctx.strokeStyle = 'rgba(94,230,160,.35)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(bx, floor - 240 * s); ctx.lineTo(bx, floor - 60 * s); ctx.stroke(); }
     }
 
-    function destroy() { document.removeEventListener('keydown', onKey); cancelAnimationFrame(raf); clearInterval(countdownTimer); stopStream(); status = 'idle'; }
+    // ---- Set feedback (phone camera only): Claude reads your last set from Phone Cam's
+    //      motion log. Asked through the embedded Phone Cam page, which answers by message.
+    let feedbackId = 0, feedbackTimer;
+    function requestFeedback() {
+      const frame = $('#phoneFeed', el);
+      if (!frame?.contentWindow) return showFeedback({ ok: false, error: 'Connect your phone first.' });
+      const id = ++feedbackId;
+      $('#fbBtn', el).disabled = true;
+      $('#fbText', el).innerHTML = '<p class="small muted">Claude is reading your last set… (about 10–30 seconds)</p>';
+      frame.contentWindow.postMessage({ type: 'phone-cam-feedback-request', id }, phoneCamOrigin);
+      clearTimeout(feedbackTimer);
+      feedbackTimer = setTimeout(() => showFeedback({ id, ok: false, error: 'No answer from Phone Cam. Try again.' }), 170_000);
+    }
+    function showFeedback(data) {
+      if (data.id != null && data.id !== feedbackId) return;      // an older request
+      clearTimeout(feedbackTimer);
+      const box = $('#fbText', el), btn = $('#fbBtn', el);
+      if (!box || !btn) return;
+      btn.disabled = false;
+      btn.textContent = 'Get feedback again';
+      if (!data.ok) { box.innerHTML = `<p class="small fb-error">${esc(data.error || 'Something went wrong.')}</p>`; return; }
+      // Plain text from Claude: "- " lines become a list, other lines paragraphs.
+      const lines = String(data.text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      let html = '', list = [];
+      const flush = () => { if (list.length) { html += `<ul>${list.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`; list = []; } };
+      for (const l of lines) {
+        if (/^[-•*]\s+/.test(l)) list.push(l.replace(/^[-•*]\s+/, ''));
+        else { flush(); html += `<p${/^Exercise:/i.test(l) ? ' class="fb-head"' : ''}>${esc(l.replace(/\*\*/g, ''))}</p>`; }
+      }
+      flush();
+      const set = data.set ? `<p class="small muted">Set of ${data.set.seconds} s · ${data.set.frames} frames</p>` : '';
+      const retry = data.published === false ? '<p class="small muted">Saved locally. Use Publish my saved sets on the Leaderboard to try again.</p>' : '';
+      box.innerHTML = html + set + retry;
+    }
+
+    function destroy() {
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('message', onPhoneCamStatus);
+      clearTimeout(phoneFeedTimer);
+      clearTimeout(feedbackTimer);
+      $('#phoneFeed', el)?.remove();
+      cancelAnimationFrame(raf);
+      clearInterval(countdownTimer);
+      stopStream();
+      status = 'idle';
+    }
     return { title: 'Record', render, destroy };
   })();
 
@@ -1091,6 +1252,7 @@
           </section>
           </div></div>
           <p class="sample-note">Sample profile · RevGym prototype</p>
+          ${phoneCamOrigin ? '<a class="btn" href="/ui/logout">Sign out</a>' : ''}
         </div>`;
       drawTrend();
       el.querySelector('.screen-inner').addEventListener('click', async (e) => {
@@ -1118,14 +1280,67 @@
   /* =================================================================
      5. SHELL: tab bar + hash router
      ================================================================= */
+  // Phone Cam serves the reports and sends their height to the RevGym shell.
+  function reportScreen(title, path, heightMessage) {
+    let el, onMsg;
+    function render(root) {
+      el = root;
+      const th = document.documentElement.getAttribute('data-theme')
+        || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      el.innerHTML = `<div class="screen-inner"><iframe id="reportFrame" title="${title}" referrerpolicy="origin"
+        src="${phoneCamOrigin}/${path}?theme=${th}" style="display:block;width:100%;height:80vh;border:0"></iframe></div>`;
+      onMsg = (e) => {
+        const f = $('#reportFrame', el);
+        if (!f || e.source !== f.contentWindow || e.origin !== phoneCamOrigin) return;
+        if (e.data?.type === heightMessage) f.style.height = `${Math.max(420, Number(e.data.h) || 0)}px`;
+      };
+      window.addEventListener('message', onMsg);
+    }
+    function destroy() { window.removeEventListener('message', onMsg); }
+    return { title, render, destroy };
+  }
+  const PersonStatsScreen = reportScreen('Personal Statistics', 'person-stats', 'person-stats-height');
+  const LeaderboardScreen = reportScreen('Leaderboard', 'leaderboard-view', 'workout-report-height');
+  const DataScreen = reportScreen('Data', 'data-view', 'workout-report-height');
+
+  // Settings: set the judge number back to 0 (the next Guest Log In becomes Judge1).
+  const JudgeSettingsScreen = {
+    title: 'Settings',
+    render(root) {
+      root.innerHTML = `<div class="screen-inner"><div class="topbar gutter"><h1>Settings</h1></div>
+        <section class="card" style="display:grid;gap:12px;max-width:560px">
+          <h2 style="margin:0">Guest judges</h2>
+          <p class="small muted" style="margin:0">Each press of Guest Log In on the welcome page is the next judge: Judge1, Judge2, Judge3, and so on. Reset sets the count back to 0, so the next press is Judge1 again. No data is deleted.</p>
+          <button class="btn" id="judgeReset" type="button">Reset judge number to 0</button>
+          <p class="small muted" id="judgeMsg" role="status" style="margin:0"></p>
+        </section></div>`;
+      $('#judgeReset', root).addEventListener('click', async (e) => {
+        if (!confirm('Reset the judge number to 0? The next Guest Log In will be Judge1 again.')) return;
+        const msg = $('#judgeMsg', root);
+        e.currentTarget.disabled = true;
+        try {
+          const res = await fetch('/auth/guest/reset', { method: 'POST' });
+          msg.textContent = res.ok ? 'Done. The next Guest Log In is Judge1.' : 'Could not reset. Try again.';
+        } catch { msg.textContent = 'Could not reach RevGym. Is it running?'; }
+        e.currentTarget.disabled = false;
+      });
+    },
+    destroy() {},
+  };
+
+  // Record (Form Check) and Personal Statistics. Plan, Statistics, Alerts and Me were
+  // sample-data screens with nothing behind them, so they're out of the menu and the
+  // router; their screen code above is kept, unused, in case they come back.
   const ROUTES = {
     record:  { screen: RecordScreen,  label: 'Record', icon: 'camera' },
-    stats:   { screen: StatsScreen,   label: 'Statistics', icon: 'trophy' },
-    plan:    { screen: PlanScreen,    label: 'Plan',   icon: 'calendar' },
-    alerts:  { screen: AlertsScreen,  label: 'Alerts', icon: 'bell' },
-    profile: { screen: ProfileScreen, label: 'Me',     icon: 'user' },
+    ...(phoneCamOrigin && {
+      stats: { screen: PersonStatsScreen, label: 'Personal Statistics', icon: 'chart' },
+      leaderboard: { screen: LeaderboardScreen, label: 'Leaderboard', icon: 'trophy' },
+      data: { screen: DataScreen, label: 'Data', icon: 'file' },
+    }),
+    settings: { screen: JudgeSettingsScreen, label: 'Settings', icon: 'gear' },
   };
-  const ORDER = ['plan', 'stats', 'record', 'alerts', 'profile'];
+  const ORDER = Object.keys(ROUTES);
   const screenEl = $('#screen'), tabbar = $('#tabbar');
   let current = null;
 
@@ -1133,7 +1348,9 @@
   tabbar.innerHTML = `<div class="side-brand"><img class="logo-head" src="${LOGO_HEAD}" alt="RevGym logo"><div class="brand-text"><b>REV GYM</b><span>Texas A&amp;M</span></div></div>`
     + ORDER.map((k) => `<button class="tab ${k === 'record' ? 'rec-tab' : ''}" data-route="${k}">${icon(ROUTES[k].icon)}<span>${ROUTES[k].label}</span>${k === 'alerts' ? '<span class="dot" id="badge" hidden></span>' : ''}</button>`).join('')
     + `<button class="tab theme-tab" id="themeBtn" type="button"></button>`
-    + `<div class="side-foot">Prototype with sample data.<br>Edits stay in this browser.</div>`;
+    // Sign out used to live on the Me screen; with Me gone it sits in the sidebar.
+    + (phoneCamOrigin ? `<a class="tab" href="/ui/logout" style="text-decoration:none">${icon('user')}<span>Sign out</span></a>` : '')
+    + (phoneCamOrigin ? '' : `<div class="side-foot">Prototype with sample data.<br>Edits stay in this browser.</div>`);
   const themeBtn = tabbar.querySelector('#themeBtn');
   // The button shows the mode you are in now (sun + "Light mode" or moon + "Dark mode"); clicking it switches.
   const paintThemeBtn = () => {
@@ -1148,12 +1365,15 @@
     document.documentElement.setAttribute('data-theme', theme);
     try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* ignore */ }
     paintThemeBtn();
+    if ([PersonStatsScreen, LeaderboardScreen, DataScreen].includes(current)) show(location.hash.slice(1));
   });
   tabbar.addEventListener('click', (e) => { const b = e.target.closest('[data-route]'); if (b) go(b.dataset.route); });
 
   async function refreshBadge() {
+    const b = $('#badge');
+    if (!b) return;                  // the Alerts tab (and its badge) is gone
     const n = (await Api.listNotifications()).filter((x) => !x.read).length;
-    const b = $('#badge'); b.hidden = !n; b.textContent = n;
+    b.hidden = !n; b.textContent = n;
   }
 
   function go(name) {
@@ -1162,6 +1382,7 @@
   async function show(name) {
     if (!ROUTES[name]) name = 'record';
     closeSheet();
+    if (name === 'record' && current === RecordScreen && $('#phoneFeed', screenEl)) return;
     current?.destroy?.();
     current = ROUTES[name].screen;
     tabbar.querySelectorAll('[data-route]').forEach((b) => (b.dataset.route === name ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));

@@ -111,3 +111,23 @@ class Rep(Base):
     angles: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     scan_set: Mapped[ScanSet] = relationship(back_populates="reps")
+
+
+class WorkoutResult(Base):
+    """Phone Cam's analysis of a recording, which can contain several exercises."""
+
+    __tablename__ = "workout_results"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    source: Mapped[str] = mapped_column(String(100), primary_key=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    exercises: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+
+
+class GuestCounter(Base):
+    """How many times "Guest Log In" has been used. Judge N is the N-th press; reset sets it back to 0."""
+
+    __tablename__ = "guest_counter"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

@@ -1,6 +1,8 @@
 // Electron shell: starts the camera server and shows the viewer (live feed + QR code).
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('node:child_process');
+const { setTimeout: delay } = require('node:timers/promises');
 const { app, BrowserWindow, dialog, shell, ipcMain, desktopCapturer } = require('electron');
 const { start } = require('./server');
 
@@ -11,15 +13,58 @@ app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
 
 let server;
 let win;
+let revgymProcess;
+const shutdown = new AbortController();
+
+async function startRevGym(port) {
+  const backendDir = path.resolve(__dirname, '../backend');
+  const venvPython = process.platform === 'win32' ? '.venv/Scripts/python.exe' : '.venv/bin/python';
+  const localPython = path.join(backendDir, venvPython);
+  const python = process.env.REVGYM_PYTHON || (fs.existsSync(localPython) ? localPython : 'python');
+  const healthUrl = `http://127.0.0.1:${port}/health`;
+  const ready = async () => {
+    try {
+      const reply = await fetch(healthUrl, { signal: AbortSignal.timeout(1000) });
+      const health = await reply.json();
+      return reply.ok && health.status === 'ok' && ['sqlite', 'postgresql'].includes(health.database);
+    } catch {
+      return false;
+    }
+  };
+
+  // Reuse a running RevGym server. Otherwise start only its PC server because phone-cam owns HTTPS.
+  if (await ready()) return;
+  shutdown.signal.throwIfAborted();
+  revgymProcess = spawn(python, ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(port)], {
+    cwd: backendDir, stdio: 'inherit', windowsHide: true,
+  });
+  let failure;
+  revgymProcess.once('error', (error) => { failure = error; });
+  revgymProcess.once('exit', (code) => {
+    failure = new Error(`RevGym stopped during startup (exit code ${code}). Check the npm start output.`);
+  });
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (failure) throw failure;
+    if (await ready()) return;
+    await delay(250, undefined, { signal: shutdown.signal });
+  }
+  throw new Error(`RevGym did not start on port ${port}. Check the npm start output.`);
+}
 
 async function createWindow() {
+  const revgymPort = Number(process.env.REVGYM_PORT || 8000);
   try {
+    await startRevGym(revgymPort);
+    shutdown.signal.throwIfAborted();
     server = await start({
+      revgymPort,
       certDir: path.join(app.getPath('userData'), 'certs'),
       testsetDir: path.join(app.getPath('videos'), 'phone-cam', 'testset'),
       motionLogDir: path.join(app.getPath('videos'), 'phone-cam', 'motion-logs'),
     });
   } catch (e) {
+    if (shutdown.signal.aborted) return;
     dialog.showErrorBox('Phone Camera',
       e.code === 'EADDRINUSE'
         ? `Port ${e.port} is already in use. Close the other phone-cam server and try again.`
@@ -31,7 +76,8 @@ async function createWindow() {
   win = new BrowserWindow({
     width: 1400,
     height: 900,
-    title: 'Phone Camera',
+    title: 'RevGym',
+    icon: path.join(__dirname, 'icon.png'),
     backgroundColor: '#111111',
     autoHideMenuBar: true,
     webPreferences: {
@@ -52,7 +98,7 @@ async function createWindow() {
     item.once('done', (_e2, state) => { if (state === 'completed' && !win.isDestroyed()) win.webContents.send('saved', filePath); });
   });
 
-  win.loadURL(server.viewerUrl);
+  win.loadURL(`http://127.0.0.1:${revgymPort}/ui/`);
 }
 
 // Windows and screens the viewer can capture for testing (minus this app's own window).
@@ -82,9 +128,16 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => {
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
   });
+  app.setAppUserModelId('com.revgym.app');   // own taskbar identity, so Windows uses our icon
   app.whenReady().then(createWindow);
 }
 app.on('window-all-closed', () => {
   if (server) server.close();
   app.quit();
 });
+app.on('before-quit', () => {
+  shutdown.abort();
+  revgymProcess?.kill();
+});
+process.on('SIGINT', () => app.quit());
+process.on('SIGTERM', () => app.quit());

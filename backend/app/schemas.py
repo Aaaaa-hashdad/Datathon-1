@@ -12,6 +12,22 @@ GENDERS = ("male", "female", "nonbinary", "other", "prefer_not_to_say")
 Gender = Literal["male", "female", "nonbinary", "other", "prefer_not_to_say"]
 
 
+class WorkoutExerciseIn(BaseModel):
+    exercise: str = Field(min_length=1, max_length=60, pattern=r"^[a-z0-9][a-z0-9 -]*$")
+    reps: int = Field(ge=1, le=1000)
+    score: float = Field(ge=1, le=10)
+
+
+class WorkoutResultIn(BaseModel):
+    source: str = Field(max_length=100, pattern=r"^\d{4}-\d{2}-\d{2}/\d{2}-\d{2}\.xlsx#\d+(?:\.\d+)?$")
+    recorded_at: datetime
+    exercises: list[WorkoutExerciseIn] = Field(max_length=50)
+
+
+class WorkoutResultsIn(BaseModel):
+    sets: list[WorkoutResultIn] = Field(min_length=1, max_length=50)
+
+
 def _check_birth_date(value: date | None) -> date | None:
     if value is None:
         return value

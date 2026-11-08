@@ -16,12 +16,15 @@ from datetime import timezone
 from typing import Literal
 
 import json
+import secrets
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -30,9 +33,9 @@ from .auth import bearer, check_login, end_session, hash_password, make_auth_dep
 from .config import BACKEND_DIR, Settings
 from .db import Base, add_missing_columns, make_engine, make_session_factory, secure_supabase_tables
 from .devices import lan_address, make_device_dependency, new_pair_code, qr_svg_data_uri, redeem_pair_code
-from .leaderboard import build_leaderboard
+from .leaderboard import build_leaderboard, workout_board
 from .live import LiveHub
-from .models import Device, Rep, ScanSet, User, utcnow
+from .models import Device, GuestCounter, Rep, ScanSet, User, WorkoutResult, utcnow
 from .schemas import (
     AuthOut,
     Credentials,
@@ -49,6 +52,7 @@ from .schemas import (
     SignUpIn,
     ScanOut,
     UserOut,
+    WorkoutResultsIn,
 )
 from .scoring import QUALIFYING_FORM_SCORE, Exercise, qualifies, set_form_score, set_points
 
@@ -218,7 +222,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # the same way the team's preview.html does. The UI's own content is untouched.
         body = index.read_text(encoding="utf-8")
         page = ('<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
-                '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>\n'
+                '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
+                f'<meta name="phone-cam-port" content="{settings.phone_cam_port}"></head><body>\n'
                 f"{body}\n</body></html>\n")
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
@@ -227,20 +232,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return FileResponse(STATIC_DIR / "ui-logout.html", headers={"Cache-Control": "no-store"})
 
     @app.get("/ui/whoami", include_in_schema=False)
-    def ui_whoami(user: User | None = Depends(cookie_user)):
+    def ui_whoami(response: Response, include_height: bool = False, user: User | None = Depends(cookie_user)):
         if user is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not logged in")
-        return {"username": user.username}
+        response.headers["Cache-Control"] = "no-store"
+        return {"username": user.username, "height_in": user.height_in} if include_height else {"username": user.username}
 
-    @app.post("/ui/logout", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
-    def ui_logout(request: Request, response: Response, db: Session = Depends(get_db)):
-        """End the /ui/ session. Only RevGym's own pages may call this (blocks other sites logging you out)."""
+    def require_same_origin(request: Request) -> None:
         origin = request.headers.get("origin")
         fetch_site = request.headers.get("sec-fetch-site")
         same_origin = (origin is None or origin == f"{request.url.scheme}://{request.url.netloc}") and \
                       fetch_site in (None, "same-origin")
         if not same_origin:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "cross-site request")
+
+    @app.post("/auth/guest", include_in_schema=False)
+    def guest_login(request: Request, response: Response, db: Session = Depends(get_db)):
+        """Guest Log In: the 1st press is Judge1, the 2nd Judge2, and so on until the count is reset."""
+        require_same_origin(request)
+        counter = db.get(GuestCounter, 1)
+        if counter is None:
+            counter = GuestCounter(id=1, count=0)
+            db.add(counter)
+        counter.count += 1
+        name = f"Judge{counter.count}"
+        user = db.scalar(select(User).where(User.username == name))
+        # Nobody knows this password; every press logs in through a fresh session instead.
+        password_hash = hash_password(secrets.token_urlsafe(24))
+        if user is None:
+            user = User(username=name, password_hash=password_hash, display_name=f"Judge {counter.count}")
+            db.add(user)
+        else:
+            user.password_hash = password_hash
+        db.commit()
+        token = start_session(db, user)
+        set_session_cookie(request, response, token)
+        return {"token": token, "user": user.username}
+
+    @app.post("/auth/guest/reset", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
+    def guest_reset(request: Request, db: Session = Depends(get_db)):
+        """Set the judge number back to 0, so the next Guest Log In is Judge1 again. Keeps all data."""
+        require_same_origin(request)
+        counter = db.get(GuestCounter, 1)
+        if counter is None:
+            db.add(GuestCounter(id=1, count=0))
+        else:
+            counter.count = 0
+        db.commit()
+
+    @app.post("/ui/logout", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
+    def ui_logout(request: Request, response: Response, db: Session = Depends(get_db)):
+        """End the /ui/ session."""
+        require_same_origin(request)
         token = request.cookies.get(SESSION_COOKIE)
         if token:
             end_session(db, token)
@@ -294,6 +337,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         """Same shape as the UI's Api.getConsistencyLeaderboard(period)."""
         return ui_bridge.consistency_leaderboard(_live_for(user, db), period)
+
+    @app.post("/api/ui/workout-results", status_code=status.HTTP_204_NO_CONTENT)
+    def publish_workout_results(body: WorkoutResultsIn, request: Request,
+                                user: User | None = Depends(cookie_user), db: Session = Depends(get_db)):
+        require_same_origin(request)
+        if user is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not logged in")
+        values = {}
+        for result in body.sets:
+            recorded_at = result.recorded_at
+            if recorded_at.tzinfo is not None:
+                recorded_at = recorded_at.astimezone(timezone.utc).replace(tzinfo=None)
+            values[result.source] = dict(user_id=user.id, source=result.source, recorded_at=recorded_at,
+                                         exercises=[item.model_dump() for item in result.exercises])
+        insert = pg_insert if engine.dialect.name == "postgresql" else sqlite_insert
+        stmt = insert(WorkoutResult).values(list(values.values()))
+        db.execute(stmt.on_conflict_do_update(index_elements=[WorkoutResult.user_id, WorkoutResult.source],
+                   set_={"recorded_at": stmt.excluded.recorded_at, "exercises": stmt.excluded.exercises}))
+        db.commit()
+
+    @app.get("/api/ui/workout-leaderboard")
+    def api_workout_leaderboard(response: Response, period: Literal["week", "all_time"] = "week",
+                                exercise: str | None = Query(None, max_length=60),
+                                user: User | None = Depends(cookie_user), db: Session = Depends(get_db)):
+        if user is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not logged in")
+        response.headers["Cache-Control"] = "no-store"
+        return workout_board(db, period, exercise, user)
 
     # ---------- scans (analysed sets) ----------
 

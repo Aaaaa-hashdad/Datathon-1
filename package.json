@@ -1,0 +1,7 @@
+{
+  "name": "datathon",
+  "private": true,
+  "scripts": {
+    "start": "npm --prefix phone-cam start --"
+  }
+}

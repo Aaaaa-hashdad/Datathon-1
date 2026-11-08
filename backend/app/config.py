@@ -24,3 +24,6 @@ class Settings:
 
     # The team's UI folder (ui/ from the front-end branch), served unchanged at /ui/.
     ui_dir: Path = field(default_factory=lambda: Path(os.getenv("UI_DIR", BACKEND_DIR.parent / "ui")))
+
+    # The local Phone Cam viewer used by the Form Check screen.
+    phone_cam_port: int = field(default_factory=lambda: int(os.getenv("HTTP_PORT") or "8080"))

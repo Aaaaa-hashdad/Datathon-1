@@ -27,6 +27,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { createHash } = require('node:crypto');
 const ExcelJS = require('exceljs');
 
 const SESSION_GAP_MIN = Number(process.env.SESSION_GAP_MIN || 15);
@@ -134,6 +135,19 @@ function createMotionLog({ dir }) {
   const retry = new Set();     // closed sessions whose last upload failed
   const recent = new Map();    // key -> recently closed session (rows still in memory)
 
+  function accountKey(username) {
+    // Preserve the existing folder where possible. Windows aliases case variants
+    // and trailing dots, and guest recordings do not belong to a RevGym account.
+    const reserved = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
+    const invalid = !/^[A-Za-z0-9_.]{2,32}$/.test(username) || username.endsWith('.')
+      || reserved.test(username) || username.toLowerCase() === 'guest';
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const alias = entries.some((entry) => entry.name.toLowerCase() === username.toLowerCase()
+      && (entry.name !== username || !entry.isDirectory()));
+    if (!invalid && !alias) return username;
+    return `account-${createHash('sha256').update(username).digest('hex').slice(0, 32)}`;
+  }
+
   function newSession(t) {
     const d = new Date(t);
     session = {
@@ -145,14 +159,16 @@ function createMotionLog({ dir }) {
   // ---- input: a live sample from the viewer (same object the MCP server gets) ----
   function addSample(s) {
     const t = s.t || Date.now();
-    if (session && (t - session.last > SESSION_GAP_MIN * 60_000 || session.user !== user || session.day !== dayOf(new Date(t)))) close();
-    if (!s.present) return;
-    if (!session) newSession(t);
+    // Newer viewers send every tracked frame in `frames`; older ones only the live sample.
+    const batched = Array.isArray(s.frames);
+    const frames = batched ? s.frames : [{ t, predicted: s.predicted, joints: s.joints, angles: s.angles }];
+    const firstFrame = frames[0]?.t || t;
+    if (session && (t - session.last > SESSION_GAP_MIN * 60_000 || session.user !== user || session.day !== dayOf(new Date(firstFrame)))) close();
+    if ((!s.present && !(batched && frames.length)) || (!session && !frames.length)) return;
+    if (!session) newSession(firstFrame);
     session.last = t;                       // someone is here, keep the session open
     if (s.room_lock) session.locks.set(s.room_lock.n, s.room_lock);
     if (s.selected_exercise) session.selected.add(s.selected_exercise);
-    // Newer viewers send every tracked frame in `frames`; older ones only the live sample.
-    const frames = Array.isArray(s.frames) ? s.frames : [{ t, predicted: s.predicted, joints: s.joints, angles: s.angles }];
     for (const f of frames) addRow(f, s.selected_exercise);
     for (const j of s.jumps || []) {
       if (session.jumps.some((x) => x.takeoff_t === j.takeoff_t)) continue;
@@ -313,8 +329,7 @@ function createMotionLog({ dir }) {
       jumps: s.jumps, locks: [...s.locks.values()].map((c) => `Room lock #${c.n} at ${clock(c.at)}: vertical from ${c.vertical}; scale from ${c.scale}; standing hip height ${c.hipCm} cm${c.tiltDeg != null ? `; phone tilt ${c.tiltDeg}°` : '; no phone sensor'}`) };
     const k = cleanKey(key);
     if (!k || !k.endsWith('.xlsx')) throw new Error(key === 'current' ? 'No session is being recorded right now.' : 'path must look like user/YYYY-MM-DD/HH-MM.xlsx');
-    const local = path.join(dir, ...k.split('/'));
-    const buf = fs.existsSync(local) ? fs.readFileSync(local) : supa ? await supa.download(k) : null;
+    const buf = await readWorkbook(k);
     if (!buf) throw new Error(`No log at ${k}`);
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(buf);
@@ -364,6 +379,14 @@ function createMotionLog({ dir }) {
       .map((e) => ({ name: e.name, folder: e.isDirectory(), size: e.isDirectory() ? null : fs.statSync(path.join(d, e.name)).size }));
   }
 
+  async function readWorkbook(key) {
+    if (key === session?.key) return workbook(session);
+    const local = path.join(dir, ...key.split('/'));
+    if (fs.existsSync(local)) return fs.promises.readFile(local);
+    if (recent.has(key)) return workbook(recent.get(key));
+    return supa ? supa.download(key) : null;
+  }
+
   async function route(req, res, url) {
     if (!isLocal(req) || !okOrigin(req)) return json(res, 403, { error: 'local only' });
     try {
@@ -392,8 +415,7 @@ function createMotionLog({ dir }) {
       if (url.pathname === '/motionlog/file') {
         const key = cleanKey(url.searchParams.get('path'));
         if (!key || !key.endsWith('.xlsx')) return json(res, 400, { error: 'path must be user/day/session.xlsx' });
-        const local = path.join(dir, ...key.split('/'));
-        const buf = fs.existsSync(local) ? fs.readFileSync(local) : supa ? await supa.download(key) : null;
+        const buf = await readWorkbook(key);
         if (!buf) return json(res, 404, { error: 'not found' });
         res.writeHead(200, { 'Content-Type': XLSX, 'Content-Disposition': `attachment; filename="${key.replace(/\//g, '_')}"` });
         return res.end(buf);
@@ -404,7 +426,45 @@ function createMotionLog({ dir }) {
     return json(res, 404, { error: 'not found' });
   }
 
-  return { addSample, route, close, setUser, listLogs, readSession, GUIDE, COLS, JOINTS, ANGLES, get user() { return user; } };
+  // The session being recorded, else the most recently closed one still in memory (null if none).
+  function latestKey(owner = user) { return userKeys(owner).at(-1) ?? null; }
+
+  // Session keys of one user that exist locally (plus the open session), oldest first.
+  function userKeys(u = user) {
+    const keys = new Set();
+    const root = path.join(dir, safeUser(u));
+    try {
+      for (const day of fs.readdirSync(root).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort()) {
+        for (const f of fs.readdirSync(path.join(root, day)).filter((x) => /^\d{2}-\d{2}\.xlsx$/.test(x)).sort()) keys.add(`${safeUser(u)}/${day}/${f}`);
+      }
+    } catch {}
+    for (const k of recent.keys()) if (k.startsWith(`${safeUser(u)}/`)) keys.add(k);
+    if (session && session.user === safeUser(u)) keys.add(session.key);
+    return [...keys].sort();
+  }
+
+  async function dataKeys(owner, day) {
+    const keys = new Set(userKeys(owner).filter((key) => !day || key.split('/')[1] === day));
+    if (supa) {
+      const days = day ? [day] : (await supa.list(owner).catch(() => []))
+        .filter((item) => item.folder && /^\d{4}-\d{2}-\d{2}$/.test(item.name)).map((item) => item.name);
+      for (const date of days) {
+        const prefix = `${owner}/${date}`;
+        const files = await supa.list(prefix).catch(() => []);
+        for (const file of files) if (!file.folder && /^\d{2}-\d{2}\.xlsx$/.test(file.name)) keys.add(`${prefix}/${file.name}`);
+      }
+    }
+    return [...keys].sort().reverse();
+  }
+  // When a session file last changed (for caching), or 'live' for one still in memory.
+  function version(key) {
+    if (key === session?.key) return `live:${session.rows.length}:${session.jumps.length}`;
+    if (recent.has(key)) return `recent:${recent.get(key).rows.length}`;
+    try { return String(fs.statSync(path.join(dir, ...key.split('/'))).mtimeMs); } catch { return 'missing'; }
+  }
+
+  return { addSample, route, close, setUser, listLogs, readSession, readWorkbook, latestKey, userKeys, dataKeys, accountKey,
+    version, dir, GUIDE, COLS, JOINTS, ANGLES, get user() { return user; } };
 }
 
 module.exports = { createMotionLog };

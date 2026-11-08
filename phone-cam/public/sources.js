@@ -37,7 +37,7 @@ window.camSource = {
     if (mode === 'file') return ready(fileVideo) ? fileVideo : null;
     return null;
   },
-  wantsPictures: () => !paused && mode === 'phone' && !rtcLive,
+  wantsPictures: () => !paused && mode === 'phone' && !(rtcLive && ready(rtcVideo)),
   label: () => (mode === 'phone' ? (rtcLive ? 'phone (WebRTC video)' : 'phone (pictures)') : mode === 'screen' ? 'screen capture' : 'video file'),
   get mode() { return mode; },
   get rtcLive() { return rtcLive; },
@@ -56,8 +56,10 @@ function iceComplete(pc, ms) {
 async function answerOffer(offer) {
   if (rtcPc) { try { rtcPc.close(); } catch {} }
   rtcLive = false;
+  rtcVideo.srcObject = null;
   const pc = rtcPc = new RTCPeerConnection({ iceServers: [] });
   pc.ontrack = (e) => {
+    if (pc !== rtcPc) return;
     try { e.receiver.playoutDelayHint = 0; } catch {}       // lowest latency, we don't need smoothness
     rtcVideo.srcObject = e.streams[0] || new MediaStream([e.track]);
     rtcVideo.play().catch(() => {});

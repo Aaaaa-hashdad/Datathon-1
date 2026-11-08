@@ -5,6 +5,7 @@
 import { createRoomLock, ROOM_JOINTS } from '/roomlock.js';
 
 const $ = (id) => document.getElementById(id);
+const embedded = document.documentElement.hasAttribute('data-embedded');
 
 // Room lock: floor-fixed coordinates in cm, feet contact and jumps (see roomlock.js).
 // Updated on EVERY tracked frame; each frame is also queued for the motion log, so the
@@ -16,7 +17,10 @@ let frameQueue = [], jumpQueue = [];
 const FRAME_QUEUE_MAX = 300;          // ~10 s at 30 fps if the server is slow
 
 const heightIn = $('roomHeight');
-try { heightIn.value = localStorage.getItem('roomHeight') || ''; } catch {}
+heightIn.value = document.querySelector('meta[name="profile-height-cm"]')?.content || '';
+if (!embedded && !heightIn.value) {
+  try { heightIn.value = localStorage.getItem('roomHeight') || ''; } catch {}
+}
 room.setHeight(heightIn.value);
 heightIn.onchange = () => {
   room.setHeight(heightIn.value);
@@ -51,17 +55,18 @@ function rawJoints(pose) {
 }
 
 window.addEventListener('tracking', (e) => {
+  if (window.camSource?.paused) return;     // the evaluator uses a separate clip clock
   const tr = e.detail;
   roomNow = room.update(tr);
   const c = $('stage');
-  if (c?.width) room.draw(c.getContext('2d'), c.width, c.height, roomNow);
+  if (!embedded && c?.width) room.draw(c.getContext('2d'), c.width, c.height, roomNow);
   const el = $('bodyBoxState');
   if (el) el.textContent = room.describe(roomNow);
   jumpQueue.push(...(roomNow.newJumps || []));
-  if (!share.checked || window.camSource?.paused || !tr.pose) return;   // not during test-set evaluation
+  if (!share.checked || !tr.pose) return;
   const L = roomNow.lock;
   frameQueue.push({
-    t: Date.now(),
+    t: tr.capturedAt ?? Date.now(),
     predicted: !!tr.pose.predicted,
     model: tr.model || null,
     joints: rawJoints(tr.pose),
@@ -82,6 +87,10 @@ $('mcpCopy').onclick = async () => {
   setTimeout(() => { $('mcpCopy').textContent = 'Copy'; }, 1500);
 };
 try { share.checked = localStorage.getItem('mcpShare') !== 'off'; } catch {}
+// Embedded in RevGym's Form Check, the sidebar (and this switch) is hidden, and Set
+// feedback needs the recording, so always share there. A saved "off" from the full
+// viewer must not silently stop recording in a place where it can't be switched back.
+if (embedded) share.checked = true;
 
 // ---- one-click connect (only inside the Electron app, which can edit Claude's settings) ----
 const native = window.phoneCamNative;
@@ -153,7 +162,9 @@ window.addEventListener('brain', (e) => {
     // Room-locked joints [X, Y] in cm from the floor point between the feet (see roomlock.js).
     room: roomNow.locked ? roomNow.joints : null,
     foot_cm: roomNow.foot_cm ?? null, feet: roomNow.feet ?? null,
-    room_lock: roomNow.lock && (({ u, r, f0, oR, s0, ratio0, cU, cR, sensorUp, seg0, ...rest }) => rest)(roomNow.lock),
+    room_lock: roomNow.lock && (({ u, r, f0, oR, s0, ratio0, cU, cR, sensorUp, seg0, estHeightCm, usedHeight, ...rest }) => ({
+      ...rest, estHeightCm: usedHeight ? null : estHeightCm,
+    }))(roomNow.lock),
     predicted: !!tr.pose?.predicted,
     // Every tracked frame since the last post (the motion log keeps all of them) + finished jumps.
     frames: frameQueue.splice(0),

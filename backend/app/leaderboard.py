@@ -14,7 +14,7 @@ from typing import Literal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import ScanSet, User
+from .models import ScanSet, User, WorkoutResult, utcnow
 from .schemas import LeaderboardEntry, LeaderboardOut, MyStanding
 from .scoring import Exercise
 
@@ -39,6 +39,31 @@ def _assign_ranks(rows: list[dict], key) -> list[dict]:
         row["rank"] = prev_rank if k == prev_key else i + 1
         prev_key, prev_rank = k, row["rank"]
     return rows
+
+
+def workout_board(session: Session, period: Period, exercise: str | None, user: User) -> dict:
+    """Best analyzed set per person, ordered by score, reps and username."""
+    stmt = select(User.username, WorkoutResult.recorded_at, WorkoutResult.exercises).join(
+        WorkoutResult, WorkoutResult.user_id == User.id
+    )
+    since = period_start(period, utcnow())
+    if since is not None:
+        stmt = stmt.where(WorkoutResult.recorded_at >= since)
+    best: dict[str, dict[str, dict]] = {}
+    for username, recorded_at, items in session.execute(stmt):
+        for item in items:
+            people = best.setdefault(item["exercise"], {})
+            previous = people.get(username)
+            if previous is None or (item["score"], item["reps"], recorded_at) > (
+                previous["score"], previous["reps"], previous["recorded_at"]
+            ):
+                people[username] = {"username": username, "score": item["score"], "reps": item["reps"],
+                                    "recorded_at": recorded_at, "is_me": username == user.username}
+    exercises = sorted(best)
+    selected = exercise if exercise is not None else (exercises[0] if exercises else None)
+    rows = sorted(best.get(selected, {}).values(), key=lambda row: (-row["score"], -row["reps"], row["username"]))
+    entries = [dict(row, rank=rank) for rank, row in enumerate(rows, start=1)]
+    return {"exercise": selected, "exercises": exercises, "entries": entries}
 
 
 def _all_lifts_rows(session: Session, since: datetime | None) -> list[dict]:

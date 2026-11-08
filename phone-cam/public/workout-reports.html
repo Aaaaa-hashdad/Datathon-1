@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGym</title>
+<style>
+  :root { color-scheme: light; --ink: #25191a; --muted: #695a5c; --panel: #fff; --line: #e5d9d9; --accent: #650f18; --tint: #faf1f1; }
+  :root[data-theme="dark"] { color-scheme: dark; --ink: #f5e8e8; --muted: #c6b5b7; --panel: #251d20; --line: #503d41; --accent: #ffb1b9; --tint: #392529; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; padding: 24px clamp(12px, 3vw, 32px) 30px; color: var(--ink); font: 15px/1.45 system-ui, sans-serif; }
+  .report { max-width: 1050px; margin: auto; }
+  h1 { margin: 0; font-size: clamp(27px, 5vw, 38px); }
+  h2 { margin: 0; font-size: 19px; }
+  p { margin: 6px 0; }
+  .muted, #notice { color: var(--muted); }
+  .filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 22px 0 14px; }
+  label { display: grid; gap: 4px; font-weight: 650; }
+  input, select, button, .button { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-height: 40px; padding: 7px 12px; }
+  button, .button { color: var(--accent); font-weight: 650; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+  button:disabled { opacity: .6; cursor: progress; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 15px; margin-block: 12px; }
+  .scroll { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; padding: 9px 12px; }
+  th { font-size: 13px; color: var(--muted); }
+  tr:last-child td { border-bottom: 0; }
+  tr.me { background: var(--tint); font-weight: 700; }
+  .data-hero { position: relative; isolation: isolate; overflow: hidden; border-radius: 22px; padding: clamp(22px, 4vw, 38px); background: linear-gradient(115deg, #3c080e, #64131e); color: #fff; }
+  .data-hero::after { content: ''; position: absolute; z-index: -1; inset: 0 0 0 44%; pointer-events: none; opacity: .42;
+    background: radial-gradient(circle at 85% 25%, #bd4c61, transparent 56%), repeating-linear-gradient(-42deg, transparent 0 20px, #ffbdc527 20px 21px); }
+  .data-hero .eyebrow { margin: 0 0 8px; color: #ffd4db; font-size: 11px; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; }
+  .data-hero h1 { font-size: clamp(33px, 5vw, 46px); line-height: 1.05; letter-spacing: -.025em; }
+  .data-hero p:last-child { color: #f8dfe2; margin: 10px 0 0; max-width: 48ch; }
+  .archive { margin-top: 22px; border: 1px solid var(--line); border-radius: 18px; overflow: hidden; background: var(--panel); }
+  .archive-tools { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 12px; padding: 17px clamp(14px, 2.8vw, 22px); }
+  .archive-tools p { margin: 2px 0 0; font-size: 13px; }
+  .archive-filter { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+  .archive-filter label { font-size: 12px; color: var(--muted); }
+  .archive-filter input { min-width: 0; font-weight: 550; }
+  .archive-filter button { background: transparent; }
+  .files { list-style: none; margin: 0; padding: 0; }
+  .file-day { padding: 7px clamp(14px, 2.8vw, 22px); margin: 0; background: var(--tint); border-block: 1px solid var(--line); color: var(--muted); font-size: 12px; font-weight: 700; }
+  .file { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 13px clamp(14px, 2.8vw, 22px); }
+  .file + .file { border-top: 1px solid var(--line); }
+  .file.selected { background: var(--tint); }
+  .file-name, .file-actions { display: flex; align-items: center; gap: 9px; }
+  .file-name strong, .file-name small { display: block; }
+  .file-name small { color: var(--muted); }
+  .file-icon { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 11px; background: var(--tint); color: var(--accent); }
+  .file-actions { flex-wrap: wrap; }
+  .file-actions :is(button, .button) { gap: 6px; font-size: 13px; }
+  .file-actions button:hover, .file-actions button[aria-expanded="true"] { background: var(--tint); }
+  .file-actions .download { background: #650f18; border-color: #650f18; color: #fff; }
+  .file-actions .download:hover { background: #801d2a; border-color: #801d2a; }
+  .archive-message { margin: 0; padding: 18px clamp(14px, 2.8vw, 22px); border-top: 1px solid var(--line); color: var(--muted); }
+  .data-preview { margin-top: 18px; padding: clamp(14px, 2.8vw, 22px); border-radius: 18px; }
+  .data-preview h2 + p { margin-top: 2px; }
+  .preview-tabs { display: flex; flex-wrap: wrap; gap: 7px; margin-block: 13px; }
+  .preview-tabs button { min-height: 36px; font-size: 13px; }
+  .preview-tabs button[aria-pressed="true"] { background: var(--tint); border-color: var(--accent); }
+  .data-preview .scroll { border: 1px solid var(--line); border-radius: 10px; }
+  .data-preview th { background: var(--tint); }
+  .data-preview td { font-variant-numeric: tabular-nums; }
+  @media (max-width: 440px) {
+    .file-actions { width: 100%; }
+    .file-actions :is(button, .button) { flex: 1; justify-content: center; }
+  }
+</style>
+</head>
+<body>
+<main class="report" id="report"></main>
+<script>
+const $ = (selector) => document.querySelector(selector);
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+})[char]);
+const theme = new URLSearchParams(location.search).get('theme');
+if (theme === 'dark') document.documentElement.dataset.theme = 'dark';
+const root = $('#report');
+if (document.referrer) {
+  const origin = new URL(document.referrer).origin;
+  new ResizeObserver(() => {
+    parent.postMessage({ type: 'workout-report-height', h: Math.ceil(root.getBoundingClientRect().height + 55) }, origin);
+  }).observe(root);
+}
+
+async function json(url, options) {
+  const response = await fetch(url, options);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || data.detail || 'Could not load this report.');
+  return data;
+}
+
+function table(rows) {
+  if (!rows.length) return '';
+  const columns = Object.keys(rows[0]);
+  return `<div class="scroll" tabindex="0" role="region" aria-label="Recorded measurements"><table><thead><tr>${columns.map((key) => `<th scope="col">${esc(key)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map((row) => `<tr>${columns.map((key) => `<td>${esc(row[key])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+function showLeaderboard() {
+  document.title = 'Leaderboard';
+  root.innerHTML = `<h1>Leaderboard</h1><p class="muted">Each person’s best analyzed set, ranked by form score and reps. Ties are ordered by username.</p>
+    <div class="filters"><label>Period<select id="period"><option value="week">This week</option><option value="all_time">All time</option></select></label>
+    <label>Exercise<select id="exercise" disabled><option value="">Loading…</option></select></label>
+    <button type="button" id="publish">Publish my saved sets</button></div>
+    <p id="notice" role="status"></p><div id="results" aria-live="polite"></div>`;
+  let latest = 0;
+  const exercise = $('#exercise'), period = $('#period'), results = $('#results');
+  async function load(keepExercise) {
+    const id = ++latest;
+    const query = new URLSearchParams({ period: period.value });
+    if (keepExercise && exercise.value) query.set('exercise', exercise.value);
+    results.textContent = 'Loading rankings…';
+    try {
+      const board = await json('/workout-leaderboard?' + query);
+      if (id !== latest) return;
+      exercise.innerHTML = board.exercises.length ? board.exercises.map((name) =>
+        `<option value="${esc(name)}">${esc(name.charAt(0).toUpperCase() + name.slice(1))}</option>`).join('') : '<option>No exercises yet</option>';
+      exercise.disabled = !board.exercises.length;
+      if (board.exercise && board.exercises.includes(board.exercise)) exercise.value = board.exercise;
+      results.innerHTML = board.entries.length ? `<div class="card scroll"><table aria-label="Workout rankings"><thead><tr>
+        <th scope="col">Rank</th><th scope="col">User</th><th scope="col">Form score</th><th scope="col">Reps</th></tr></thead><tbody>${board.entries.map((row) =>
+          `<tr${row.is_me ? ' class="me"' : ''}><td>${row.rank}</td><td>${esc(row.username)}${row.is_me ? ' (you)' : ''}</td><td>${row.score} / 10</td><td>${row.reps}</td></tr>`).join('')}</tbody></table></div>`
+        : '<p class="muted">No published sets for this period yet.</p>';
+    } catch (error) {
+      if (id === latest) results.textContent = error.message;
+    }
+  }
+  period.onchange = () => load(false);
+  exercise.onchange = () => load(true);
+  $('#publish').onclick = async (event) => {
+    const button = event.currentTarget, notice = $('#notice');
+    button.disabled = true;
+    notice.textContent = 'Publishing saved sets…';
+    try {
+      const { published } = await json('/workout-leaderboard/publish', { method: 'POST' });
+      notice.textContent = published ? `Published ${published} saved ${published === 1 ? 'set' : 'sets'}.` : 'No analyzed sets saved on this PC yet.';
+      await load(false);
+    } catch (error) { notice.textContent = error.message; }
+    finally { button.disabled = false; }
+  };
+  load(false);
+}
+
+function showData() {
+  document.title = 'Data';
+  const icons = {
+    file: '<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/>',
+    eye: '<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="2.5"/>',
+    download: '<path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4"/>',
+  };
+  const icon = (name) => `<svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${icons[name]}</svg>`;
+  const dayLabel = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeZone: 'UTC' });
+  const timeLabel = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+  const sessionTime = (session) => {
+    const [day, file] = session.split('/');
+    return timeLabel.format(new Date(`${day}T${file.slice(0, 5).replace('-', ':')}:00Z`));
+  };
+  root.innerHTML = `<header class="data-hero"><p class="eyebrow">RevGym workout archive</p><h1>Data</h1>
+    <p>Browse your recorded sessions and download the original measurements as Excel workbooks.</p></header>
+    <section class="archive" aria-labelledby="archive-title">
+      <div class="archive-tools"><div><h2 id="archive-title">Recordings</h2><p class="muted" id="file-count" role="status"></p></div>
+      <div class="archive-filter"><label>Recording date<input id="date" type="date"></label><button type="button" id="clear" hidden>Clear filter</button></div></div>
+      <div id="files" aria-live="polite"></div>
+    </section><section class="card data-preview" id="preview" aria-live="polite" hidden></section>`;
+  const files = $('#files'), preview = $('#preview'), date = $('#date');
+  const count = $('#file-count'), clear = $('#clear');
+  let listRequest = 0, previewRequest = 0;
+  let activePreview = null, previewData = null, previewSheet = 'motion';
+  const message = (value) => `<p class="archive-message">${esc(value)}</p>`;
+
+  function paintPreview() {
+    const isMotion = previewSheet === 'motion';
+    const rows = isMotion ? previewData.rows : previewData.jumps;
+    const total = isMotion ? previewData.frames : previewData.jumpCount;
+    preview.innerHTML = `<h2>Workbook preview</h2><p class="muted">${esc(dayLabel.format(new Date(activePreview.split('/')[0] + 'T00:00:00Z')))} · ${esc(sessionTime(activePreview))}</p>
+      <div class="preview-tabs" role="group" aria-label="Workbook sheet">
+        <button type="button" data-sheet="motion" aria-pressed="${isMotion}">Motion · ${previewData.frames.toLocaleString()}</button>
+        <button type="button" data-sheet="jumps" aria-pressed="${!isMotion}">Jumps · ${previewData.jumpCount.toLocaleString()}</button>
+      </div><p class="muted">${total ? `Showing ${rows.length.toLocaleString()} of ${total.toLocaleString()} ${isMotion ? 'frames' : 'jumps'}` : `No ${isMotion ? 'motion frames' : 'jumps'} recorded in this session.`}</p>${table(rows)}`;
+  }
+
+  function selectPreview(session) {
+    activePreview = session;
+    previewData = null;
+    preview.hidden = !session;
+    preview.textContent = session ? 'Loading workbook preview…' : '';
+    files.querySelectorAll('[data-preview]').forEach((button) => {
+      const open = button.dataset.preview === session;
+      button.setAttribute('aria-expanded', String(open));
+      button.closest('.file').classList.toggle('selected', open);
+      button.querySelector('span').textContent = open ? 'Hide preview' : 'Preview';
+    });
+  }
+
+  async function load() {
+    const id = ++listRequest;
+    ++previewRequest;
+    selectPreview(null);
+    clear.hidden = !date.value;
+    count.textContent = '';
+    files.innerHTML = message('Loading recordings…');
+    try {
+      const { files: sessions } = await json('/workout-data/list?' + new URLSearchParams({ day: date.value }));
+      if (id !== listRequest) return;
+      count.textContent = `${sessions.length.toLocaleString()} ${sessions.length === 1 ? 'workbook' : 'workbooks'}`;
+      const days = new Map();
+      for (const session of sessions) {
+        const day = session.split('/')[0];
+        if (!days.has(day)) days.set(day, []);
+        days.get(day).push(session);
+      }
+      files.innerHTML = days.size ? [...days].map(([day, entries]) => `<div><h3 class="file-day">${esc(dayLabel.format(new Date(day + 'T00:00:00Z')))}</h3>
+        <ul class="files">${entries.map((session) => `<li class="file">
+          <div class="file-name"><span class="file-icon">${icon('file')}</span><div><strong>${esc(sessionTime(session))}</strong><small>Excel workbook</small></div></div>
+          <div class="file-actions"><button type="button" data-preview="${esc(session)}" aria-controls="preview" aria-expanded="false">${icon('eye')}<span>Preview</span></button>
+          <a class="button download" href="/workout-data/download?session=${encodeURIComponent(session)}" download>${icon('download')} Download Excel</a></div></li>`).join('')}</ul></div>`).join('')
+        : message(date.value ? 'No recordings on this date.' : 'Your recordings will appear here after a workout.');
+    } catch (error) { if (id === listRequest) files.innerHTML = message(error.message); }
+  }
+  date.onchange = load;
+  clear.onclick = () => { date.value = ''; load(); date.focus(); };
+  files.onclick = async (event) => {
+    const button = event.target.closest('[data-preview]');
+    if (!button) return;
+    const id = ++previewRequest;
+    const session = button.dataset.preview;
+    if (session === activePreview) { selectPreview(null); return; }
+    selectPreview(session);
+    try {
+      const data = await json('/workout-data/preview?session=' + encodeURIComponent(session));
+      if (id !== previewRequest) return;
+      previewData = data;
+      previewSheet = 'motion';
+      paintPreview();
+      preview.scrollIntoView({ block: 'nearest' });
+    } catch (error) { if (id === previewRequest) preview.textContent = error.message; }
+  };
+  preview.onclick = (event) => {
+    const button = event.target.closest('[data-sheet]');
+    if (!button || !previewData || button.dataset.sheet === previewSheet) return;
+    previewSheet = button.dataset.sheet;
+    paintPreview();
+    preview.querySelector('[aria-pressed="true"]').focus();
+  };
+  load();
+}
+
+if (location.pathname === '/leaderboard-view') showLeaderboard();
+else showData();
+</script>
+</body>
+</html>

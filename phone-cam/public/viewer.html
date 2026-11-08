@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8">
 <title>Phone Camera</title>
+<meta name="profile-height-cm" content="">
+<script>
+  if (location.pathname === '/form-check') document.documentElement.dataset.embedded = '';
+</script>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; height: 100vh; background: #111; color: #eee; font-family: system-ui, sans-serif;
@@ -103,6 +107,10 @@
     aside { width: 100%; border-left: 0; border-bottom: 1px solid #222; }
     #feedWrap { min-height: 50vh; }
   }
+  html[data-embedded] :is(header, aside, #placeholder) { display: none; }
+  html[data-embedded] main { display: block; overflow: hidden; }
+  html[data-embedded] #feedWrap { width: 100%; height: 100%; }
+  html[data-embedded] #stage { width: 100%; height: 100%; object-fit: contain; }
 </style>
 </head>
 <body>
@@ -116,6 +124,8 @@
     <button id="recBtn" title="Record the annotated video plus tracking data">● Record</button>
     <button id="tsOpen" title="Labelled test clips and accuracy evaluation">Test set</button>
     <button id="toggleQr">Hide QR</button>
+    <button id="logout">Sign out</button>
+    <span id="logoutError" role="alert" hidden></span>
   </header>
   <!-- Video sources are decoded here, kept technically on-screen (tiny, transparent) so
        the browser keeps delivering frames; the tracker draws them onto the canvas. -->
@@ -255,7 +265,7 @@
         </div>
         <div id="bodyState" class="muted">No body detected</div>
         <div class="mcpRow">
-          <label title="Optional. Makes the room lock's centimetres exact (otherwise estimated from the body).">Your height <input id="roomHeight" type="number" min="100" max="230" step="1" placeholder="cm" style="width:5em"> cm</label>
+          <label title="Sets the room lock's scale (otherwise estimated from the body).">Your height <input id="roomHeight" type="number" min="100" max="245" step="0.01" placeholder="cm" style="width:5em"> cm</label>
           <button id="roomRelock" class="mini">Re-lock room</button>
         </div>
         <div id="bodyBoxState" class="muted">Room lock: stand straight and still for 2 s, whole body and feet in view (phone on a stand).</div>
@@ -274,9 +284,46 @@
   </main>
 
 <script>
+const logout = document.getElementById('logout');
+const logoutError = document.getElementById('logoutError');
+logout.onclick = async () => {
+  logout.disabled = true;
+  logoutError.hidden = true;
+  try {
+    const response = await fetch('/ui/logout', { method: 'POST' });
+    if (!response.ok) throw new Error();
+    location.replace('/');
+  } catch {
+    logoutError.textContent = 'Could not sign out. Is RevGym running?';
+    logoutError.hidden = false;
+    logout.disabled = false;
+  }
+};
+
 const urlsSel = document.getElementById('urls');
 const connect = document.getElementById('connect');
 const qrBtn = document.getElementById('toggleQr');
+const embedded = document.documentElement.hasAttribute('data-embedded');
+const parentOrigin = embedded && document.referrer ? new URL(document.referrer).origin : null;
+let phoneUrls = null;
+let lastPhoneSeenAt = 0;
+
+// Embedded in RevGym's Form Check: its "Get feedback" button asks through this page
+// (same origin as /feedback), and the answer goes back to the parent page.
+if (parentOrigin) {
+  window.addEventListener('message', async (event) => {
+    if (event.origin !== parentOrigin || event.source !== window.parent) return;
+    const msg = event.data;
+    if (msg?.type !== 'phone-cam-feedback-request') return;
+    let reply;
+    try {
+      reply = await (await fetch('/feedback', { method: 'POST' })).json();
+    } catch {
+      reply = { ok: false, error: 'Phone Cam is not responding.' };
+    }
+    window.parent.postMessage({ type: 'phone-cam-feedback', id: msg.id, ...reply }, parentOrigin);
+  });
+}
 
 function showQr(u) {
   document.getElementById('qr').innerHTML = `<img alt="QR code" src="/qr.svg?url=${encodeURIComponent(u)}">`;
@@ -287,7 +334,8 @@ function setQrVisible(v) {
   qrBtn.textContent = v ? 'Hide QR' : 'Show QR';
 }
 
-fetch('/info').then(r => r.json()).then(({ phoneUrls }) => {
+fetch('/info').then(r => r.json()).then((info) => {
+  phoneUrls = info.phoneUrls;
   if (!phoneUrls.length) {
     document.getElementById('url').textContent = 'No network found — connect this PC to Wi-Fi and restart.';
     return;
@@ -296,7 +344,7 @@ fetch('/info').then(r => r.json()).then(({ phoneUrls }) => {
   urlsSel.style.display = phoneUrls.length > 1 ? '' : 'none';
   urlsSel.onchange = () => showQr(urlsSel.value);
   showQr(phoneUrls[0]);
-});
+}).catch(() => { phoneUrls = []; });
 
 qrBtn.onclick = () => setQrVisible(connect.classList.contains('hidden'));
 
@@ -309,7 +357,7 @@ setInterval(async () => {
     if (src && src.mode !== 'phone') {
       on = !!src.activeVideo();
       state = src.mode === 'screen' ? 'Testing on screen capture' : 'Testing on a video file';
-    } else if (src?.rtcLive) {
+    } else if (src?.rtcLive && src.activeVideo()) {
       on = true; state = 'Phone connected (video)'; fps = `${Math.round(src.rtcFps)} fps in`;
     } else {
       const s = await (await fetch('/status')).json();
@@ -320,14 +368,30 @@ setInterval(async () => {
     document.getElementById('dot').classList.toggle('on', on);
     document.getElementById('state').textContent = state;
     document.getElementById('fps').textContent = fps;
+    if (parentOrigin && phoneUrls) {
+      const now = Date.now();
+      if (on) lastPhoneSeenAt = now;
+      const lock = window.roomLock?.lock;
+      window.parent.postMessage({
+        type: 'phone-cam-status', connected: on, reconnecting: !on && now - lastPhoneSeenAt < 4000, phoneUrls,
+        calibration: lock ? (lock.usedHeight ? 'profile' : 'estimated') : 'waiting',
+      }, parentOrigin);
+    }
   } catch {}
 }, 1000);
 </script>
 <script type="module" src="/sources.js"></script>
 <script type="module" src="/brain.js"></script>
-<script type="module" src="/eval.js"></script>
-<script type="module" src="/mcp-bridge.js"></script>
 <script type="module" src="/tracker.js"></script>
-<script type="module" src="/workout.mjs"></script>
+<!-- Always loaded, also when embedded in RevGym's Form Check: it sends the tracking to
+     the server (motion log → Set feedback, room lock, Claude's MCP tools). Without it
+     nothing gets recorded. -->
+<script type="module" src="/mcp-bridge.js"></script>
+<script type="module">
+  if (!document.documentElement.hasAttribute('data-embedded')) {
+    await import('/eval.js');
+    await import('/workout.mjs');
+  }
+</script>
 </body>
 </html>

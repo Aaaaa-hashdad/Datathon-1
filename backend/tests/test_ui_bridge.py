@@ -148,6 +148,7 @@ def test_login_page_uses_the_team_logo(client):
     assert 'src="/ui/assets/reveille-logo.png"' in page
     # A small Log in button opens the (initially hidden) log in box.
     assert 'id="open-login"' in page and 'id="login-card"' in page and 'role="dialog"' in page
+    assert 'id="open-signup"' in page and 'href="/static/auth-cube.css"' in page
 
 
 def test_ui_logout(client):

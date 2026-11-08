@@ -43,7 +43,7 @@ function createMcp({ onState, motionLog } = {}) {
       if (url.pathname === '/state' && req.method === 'POST') {
         const s = JSON.parse((await readBody(req, 2e6)).toString('utf8'));
         s.t = Date.now();
-        try { onState?.(s); } catch (e) { console.error('[state hook]', e.message); }
+        try { onState?.(s, req); } catch (e) { console.error('[state hook]', e.message); }
         delete s.frames;            // per-frame data is for the motion log; keep live history light
         history.push(s);
         while (history.length && history[0].t < s.t - HISTORY_SECONDS * 1000) history.shift();

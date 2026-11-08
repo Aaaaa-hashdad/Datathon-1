@@ -9,6 +9,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const canvas = $('stage');
 const ctx = canvas.getContext('2d');
+const showCaption = !document.documentElement.hasAttribute('data-embedded');
 
 let lastPanel = 0;
 
@@ -17,7 +18,7 @@ window.addEventListener('tracking', (e) => {
   window.brainState = state;
   window.dispatchEvent(new CustomEvent('brain', { detail: state }));
 
-  drawCaption(state.headline);
+  if (showCaption) drawCaption(state.headline);
 
   // The panel doesn't need 30 updates a second; keeps text readable.
   const now = performance.now();
