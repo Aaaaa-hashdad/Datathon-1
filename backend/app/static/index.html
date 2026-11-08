@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGym</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="pc">
+
+<!-- Reveille artwork, reused with <use href="#reveille-art"> -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <clipPath id="revClip"><circle cx="100" cy="100" r="100"></circle></clipPath>
+    <radialGradient id="revSable" cx="50%" cy="38%" r="60%"><stop offset="0%" stop-color="#E6BC80"></stop><stop offset="60%" stop-color="#C98F52"></stop><stop offset="100%" stop-color="#94592A"></stop></radialGradient>
+    <radialGradient id="revMane" cx="50%" cy="45%" r="60%"><stop offset="0%" stop-color="#D6A468"></stop><stop offset="100%" stop-color="#9A6430"></stop></radialGradient>
+    <g id="reveille-art">
+      <g clip-path="url(#revClip)">
+        <circle cx="100" cy="100" r="100" fill="#EFE6DC"></circle>
+        <path d="M34 128 C22 92 36 52 64 40 L100 32 L136 40 C164 52 178 92 166 128 C156 156 44 156 34 128 Z" fill="url(#revMane)"></path>
+        <path d="M26 200 C24 168 36 148 52 138 C50 130 56 126 62 132 C62 122 70 120 74 128 C76 118 86 118 88 128 C92 122 98 126 100 136 C102 126 108 122 112 128 C114 118 124 118 126 128 C130 120 138 122 138 132 C144 126 150 130 148 138 C164 148 176 168 174 200 Z" fill="#FFFFFF"></path>
+        <path d="M62 62 C56 48 58 34 66 26 C74 22 82 32 88 52 Z" fill="#9A5422"></path>
+        <path d="M66 26 C60 24 53 28 50 37 C57 38 63 34 68 29 Z" fill="#6E3814"></path>
+        <path d="M68 38 C67 46 69 52 73 57 L84 51 C81 44 76 39 68 38 Z" fill="#E2B88A"></path>
+        <path d="M138 62 C144 48 142 34 134 26 C126 22 118 32 112 52 Z" fill="#9A5422"></path>
+        <path d="M134 26 C140 24 147 28 150 37 C143 38 137 34 132 29 Z" fill="#6E3814"></path>
+        <path d="M132 38 C133 46 131 52 127 57 L116 51 C119 44 124 39 132 38 Z" fill="#E2B88A"></path>
+        <path d="M68 52 C80 42 120 42 132 52 C141 64 137 86 127 106 C119 124 111 142 105 152 C103 156 97 156 95 152 C89 142 81 124 73 106 C63 86 59 64 68 52 Z" fill="url(#revSable)"></path>
+        <path d="M68 52 C62 64 64 84 73 106 C79 120 85 132 90 142 C84 124 78 100 76 80 C75 68 72 58 68 52 Z" fill="#7E4318" opacity="0.55"></path>
+        <path d="M132 52 C138 64 136 84 127 106 C121 120 115 132 110 142 C116 124 122 100 124 80 C125 68 128 58 132 52 Z" fill="#7E4318" opacity="0.55"></path>
+        <path d="M100 44 C97 58 96 78 93 98 C89 116 87 130 92 144 C95 152 105 152 108 144 C113 130 111 116 107 98 C104 78 103 58 100 44 Z" fill="#FFFFFF"></path>
+        <path d="M82 108 C86 128 93 146 100 156 C107 146 114 128 118 108 C110 118 90 118 82 108 Z" fill="#FFFFFF"></path>
+        <path d="M75 80 Q83 73 91 79 Q83 84 75 80 Z" fill="#2A1A10"></path>
+        <circle cx="83.5" cy="78.6" r="3.2" fill="#5A3418"></circle><circle cx="84.8" cy="77.4" r="1" fill="#FFFFFF"></circle>
+        <path d="M125 80 Q117 73 109 79 Q117 84 125 80 Z" fill="#2A1A10"></path>
+        <circle cx="116.5" cy="78.6" r="3.2" fill="#5A3418"></circle><circle cx="117.8" cy="77.4" r="1" fill="#FFFFFF"></circle>
+        <path d="M93 145 C93 140 107 140 107 145 C107 151 103 154 100 154 C97 154 93 151 93 145 Z" fill="#1A1214"></path>
+        <path d="M87 151 Q100 181 113 151 Q100 160 87 151 Z" fill="#4A1E22"></path>
+        <path d="M92 160 Q92 182 100 182 Q108 182 108 160 Q100 164 92 160 Z" fill="#E07A86"></path>
+        <path d="M18 200 C30 180 62 172 100 174 C138 172 170 180 182 200 Z" fill="#500000"></path>
+        <path d="M18 200 C30 180 62 172 100 174 C138 172 170 180 182 200" stroke="#FFFFFF" stroke-width="3" fill="none"></path>
+      </g>
+      <circle cx="100" cy="100" r="97" fill="none" stroke="#FFFFFF" stroke-width="6"></circle>
+    </g>
+  </defs>
+</svg>
+
+<!-- ===== Log in / Sign up ===== -->
+<main id="auth-view" class="auth-layout" hidden>
+  <section class="auth-brand">
+    <div class="wordmark">RevGym</div>
+    <svg class="reveille-xl" viewBox="0 0 200 200" role="img" aria-label="Reveille, a rough collie in a maroon blanket"><use href="#reveille-art"></use></svg>
+    <h1>Howdy! I'm Reveille.</h1>
+    <p>Record your lift on your phone. Review your form and climb the leaderboard here on your PC.</p>
+  </section>
+
+  <section class="auth-panel">
+    <div class="card auth-card">
+      <h2 id="auth-title">Log in</h2>
+      <div class="segmented" role="tablist" aria-label="Log in or sign up">
+        <button type="button" role="tab" id="tab-login" aria-selected="true">Log in</button>
+        <button type="button" role="tab" id="tab-signup" aria-selected="false">Sign up</button>
+      </div>
+      <form id="auth-form" novalidate>
+        <label class="field">
+          <span>Username</span>
+          <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="2" maxlength="32" pattern="[A-Za-z0-9_.]+">
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <span class="password-wrap">
+            <input id="password" name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="128">
+            <button type="button" id="toggle-password" class="ghost" aria-pressed="false">Show</button>
+          </span>
+          <small id="password-hint" class="hint" hidden>At least 8 characters. Letters, numbers, dots and underscores for the username.</small>
+        </label>
+        <!-- Sign up only: saved to your profile in Supabase. Weight, height, gender and birthday stay private. -->
+        <fieldset id="signup-fields" class="signup-fields" hidden>
+          <legend>About you</legend>
+          <div class="su-grid">
+            <label class="field"><span>Graduation year</span>
+              <select id="su-grad" required><option value="">Choose…</option></select>
+            </label>
+            <label class="field"><span>Gender</span>
+              <select id="su-gender" required>
+                <option value="">Choose…</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+                <option value="nonbinary">Non-binary</option>
+                <option value="other">Other</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
+              </select>
+            </label>
+          </div>
+          <label class="field"><span>Major</span>
+            <input id="su-major" list="su-majors" autocomplete="off" maxlength="80" required placeholder="e.g. Kinesiology">
+            <datalist id="su-majors">
+              <option value="Kinesiology"></option><option value="Computer Science"></option>
+              <option value="Mechanical Engineering"></option><option value="Biomedical Sciences"></option>
+              <option value="Biology"></option><option value="Business"></option>
+              <option value="Finance"></option><option value="Nutrition"></option>
+              <option value="Psychology"></option><option value="Animal Science"></option>
+              <option value="Chemical Engineering"></option><option value="Industrial Engineering"></option>
+              <option value="Aerospace Engineering"></option><option value="Petroleum Engineering"></option>
+              <option value="Construction Science"></option><option value="Agricultural Business"></option>
+              <option value="Economics"></option><option value="Communication"></option>
+              <option value="Nursing"></option><option value="Sport Management"></option>
+            </datalist>
+          </label>
+          <div class="su-grid">
+            <div class="field"><span id="su-height-label">Height</span>
+              <div class="su-height" role="group" aria-labelledby="su-height-label">
+                <select id="su-ft" aria-label="Feet" required>
+                  <option value="">ft</option><option value="4">4 ft</option><option value="5">5 ft</option>
+                  <option value="6">6 ft</option><option value="7">7 ft</option>
+                </select>
+                <select id="su-in" aria-label="Inches" required>
+                  <option value="">in</option><option value="0">0 in</option><option value="1">1 in</option><option value="2">2 in</option>
+                  <option value="3">3 in</option><option value="4">4 in</option><option value="5">5 in</option><option value="6">6 in</option>
+                  <option value="7">7 in</option><option value="8">8 in</option><option value="9">9 in</option><option value="10">10 in</option>
+                  <option value="11">11 in</option>
+                </select>
+              </div>
+            </div>
+            <label class="field"><span>Weight (lb)</span>
+              <input id="su-weight" type="number" inputmode="decimal" min="50" max="700" step="0.1" required>
+            </label>
+          </div>
+          <label class="field"><span>Date of birth</span>
+            <input id="su-dob" type="date" required>
+          </label>
+          <small class="hint">Only your graduation year and major are shown to others. Weight, height, gender and birthday stay private.</small>
+        </fieldset>
+
+        <p id="auth-error" class="error" role="alert" hidden></p>
+        <button type="submit" id="auth-submit" class="primary">Log in</button>
+      </form>
+    </div>
+  </section>
+</main>
+
+<!-- ===== Main PC app ===== -->
+<div id="app-view" hidden>
+  <header class="topbar">
+    <div class="wordmark small">RevGym</div>
+    <div class="topbar-right">
+      <span class="who-am-i">Signed in as <strong id="me-name"></strong></span>
+      <button type="button" id="logout" class="outline-light">Log out</button>
+    </div>
+  </header>
+
+  <main class="dashboard">
+    <!-- Leaderboard -->
+    <section class="card board-card" aria-labelledby="board-title">
+      <div class="card-head">
+        <div>
+          <h1 id="board-title">Leaderboard</h1>
+          <p class="muted">Everyone on RevGym</p>
+        </div>
+        <div class="segmented" role="group" aria-label="Time period">
+          <button type="button" data-period="week" aria-pressed="true">This week</button>
+          <button type="button" data-period="all_time" aria-pressed="false">All time</button>
+        </div>
+      </div>
+      <div id="lift-tabs" class="chips" role="tablist" aria-label="Lift"></div>
+      <p id="board-rule" class="muted rule"></p>
+
+      <div class="table-wrap">
+        <table class="board-table">
+          <thead>
+            <tr><th scope="col">Rank</th><th scope="col">Lifter</th><th scope="col" id="value-head">Points</th><th scope="col" id="form-head">Form</th></tr>
+          </thead>
+          <tbody id="board-body"></tbody>
+        </table>
+      </div>
+      <p id="board-empty" class="empty" hidden>No qualifying sets yet. Be the first!</p>
+      <p id="board-error" class="error" role="alert" hidden></p>
+
+      <div id="me-card" class="me-card" hidden>
+        <span id="me-rank" class="me-rank"></span>
+        <span class="me-text"><span class="me-label">You</span><span id="me-note" class="me-note"></span></span>
+        <span id="me-value" class="me-value"></span>
+      </div>
+    </section>
+
+    <aside class="side">
+      <!-- Phone link -->
+      <section class="card" aria-labelledby="phone-title">
+        <div class="phone-head">
+          <svg class="reveille-sm" viewBox="0 0 200 200" aria-hidden="true"><use href="#reveille-art"></use></svg>
+          <div>
+            <h2 id="phone-title">Your phone</h2>
+            <p class="muted" id="phone-status">Your phone is the camera. Videos sync here.</p>
+          </div>
+        </div>
+
+        <ul id="device-list" class="device-list"></ul>
+
+        <div id="pair-box" class="pair-box" hidden>
+          <p class="pair-lead">Scan with your phone's camera</p>
+          <img id="pair-qr" class="pair-qr" alt="QR code that links your phone to RevGym">
+          <ol class="steps">
+            <li>Make sure your phone is on the same Wi-Fi as this PC.</li>
+            <li>Scan the code. The RevGym camera opens and links by itself.</li>
+            <li>If your phone warns the connection isn't private, tap <strong>Advanced</strong>, then <strong>Proceed</strong>. That's this PC's own security certificate.</li>
+          </ol>
+          <details class="manual">
+            <summary>Can't scan? Type it in instead</summary>
+            <p>Open <strong id="phone-url" class="mono"></strong> and enter <strong id="pair-code" class="mono code-inline"></strong></p>
+          </details>
+          <p class="muted small-text" aria-live="polite">Expires in <span id="pair-expiry"></span>. Waiting for your phone…</p>
+        </div>
+        <p id="pair-error" class="error" role="alert" hidden></p>
+        <button type="button" id="pair-start" class="primary">Link a phone</button>
+      </section>
+
+      <!-- Live camera -->
+      <section class="card" aria-labelledby="live-title" id="live-card" hidden>
+        <h2 id="live-title">Live camera</h2>
+        <p class="muted" id="live-status" aria-live="polite">Connecting to your phone…</p>
+        <div class="live-frame">
+          <video id="live-video" autoplay playsinline muted aria-label="Live view from your phone's camera"></video>
+        </div>
+        <p class="muted small-text">Live only: nothing is recorded or saved.</p>
+        <p id="live-error" class="error" role="alert" hidden></p>
+        <button type="button" id="live-retry" class="secondary" hidden>Reconnect</button>
+      </section>
+    </aside>
+  </main>
+</div>
+
+<script src="/static/signup-fields.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

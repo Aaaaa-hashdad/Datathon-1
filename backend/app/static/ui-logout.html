@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevGym · Log out</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="pc">
+<!-- /ui/logout: ends your session on this browser. The team's UI has no log out button, so this page is the way out. -->
+<main class="ui-auth">
+  <section class="ui-brand">
+    <img class="ui-logo" src="/ui/assets/reveille-logo.png" alt="RevGym: Reveille with the Texas A&amp;M logo">
+    <p>Gig 'em! See you at the next workout.</p>
+  </section>
+
+  <section class="ui-panel is-open">
+    <!-- Signed in -->
+    <div class="card auth-card" id="signed-in" hidden>
+      <h2>Log out?</h2>
+      <p class="muted">You're signed in as <strong id="who"></strong>.</p>
+      <p id="error" class="error" role="alert" hidden></p>
+      <div class="ui-actions">
+        <button type="button" id="logout" class="primary">Log out</button>
+        <a class="secondary" href="/ui/">Back to RevGym</a>
+      </div>
+    </div>
+
+    <!-- Signed out -->
+    <div class="card auth-card" id="signed-out" hidden>
+      <h2 id="out-title">You're logged out</h2>
+      <p class="muted">You can log back in anytime, or with a different account.</p>
+      <div class="ui-actions">
+        <a class="primary" href="/ui/" style="display:flex;align-items:center;justify-content:center;text-decoration:none">Log in</a>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const showSignedOut = (title) => {
+    $("signed-in").hidden = true;
+    $("signed-out").hidden = false;
+    if (title) $("out-title").textContent = title;
+  };
+
+  $("logout").onclick = async () => {
+    const btn = $("logout");
+    btn.disabled = true;
+    btn.textContent = "Logging out…";
+    try {
+      const res = await fetch("/ui/logout", { method: "POST" });
+      if (!res.ok && res.status !== 401) throw new Error();
+      // Also forget the other RevGym page's saved login on this computer, if any.
+      try { localStorage.removeItem("revgym_token"); } catch {}
+      showSignedOut("You're logged out");
+    } catch {
+      $("error").textContent = "Couldn't log out. Is RevGym running?";
+      $("error").hidden = false;
+      btn.disabled = false;
+      btn.textContent = "Log out";
+    }
+  };
+
+  (async () => {
+    try {
+      const res = await fetch("/ui/whoami", { cache: "no-store" });
+      if (!res.ok) return showSignedOut("You're not logged in");
+      $("who").textContent = (await res.json()).username;
+      $("signed-in").hidden = false;
+      $("logout").focus();
+    } catch {
+      showSignedOut("Couldn't reach RevGym");
+    }
+  })();
+})();
+</script>
+</body>
+</html>
