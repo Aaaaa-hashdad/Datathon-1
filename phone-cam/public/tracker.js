@@ -28,7 +28,7 @@ const JOINTS = [
 ];
 
 // Points whose speed we report (m/s, hip-centred so walking doesn't count as limb motion).
-const MOVERS = { 'Head': 0, 'L hand': 15, 'R hand': 16, 'L foot': 27, 'R foot': 28 };
+const MOVERS = { 'Head': 0, 'L wrist': 15, 'R wrist': 16, 'L ankle': 27, 'R ankle': 28 };
 
 const VIS = 0.5;        // landmark visibility to trust it (solid lines, angles)
 const VIS_FAINT = 0.2;  // below VIS but above this: drawn dashed so limbs don't just vanish
@@ -79,12 +79,16 @@ const smoothLm = makeSmoother(), smoothWorld = makeSmoother();
 // ---------- setup ----------
 const canvas = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
-const opts = { body: true, hands: true, face: true, video: true };
+// Body only: hand and face results are never output, drawn or described (permanently off).
+// Holistic still finds hands/face internally; they are used only to reject false bodies
+// and keep left/right straight, and never leave this file.
+const BODY_ONLY = { hands: false, face: false };
+const opts = { body: true, video: true, ...BODY_ONLY };
 for (const k of Object.keys(opts)) {
   const el = document.getElementById('opt-' + k);
   if (el) {
     el.checked = opts[k];
-    el.onchange = () => { opts[k] = el.checked; if (k !== 'video') autoPipeline(); };
+    el.onchange = () => { opts[k] = el.checked; Object.assign(opts, BODY_ONLY); if (k !== 'video') autoPipeline(); };
   }
 }
 function syncBoxes() {
@@ -120,6 +124,11 @@ let pipe = null;              // { kind, choice, holistic? , pose?, hands?, dele
 let handsTask = null;         // shared hand model for the separate pipelines
 
 async function loadPipeline(choice) {
+  if (choice === 'hybrid') {
+    const hol = await loadPipeline('holistic');
+    const sep = await loadPipeline('heavy');
+    return { kind: 'hybrid', choice, holistic: hol.holistic, pose: sep.pose, hands: sep.hands, delegate: sep.delegate };
+  }
   if (choice === 'holistic') {
     const h = await create(HolisticLandmarker, '/models/holistic_landmarker.task', {
       minPoseDetectionConfidence: 0.6,
@@ -127,7 +136,7 @@ async function loadPipeline(choice) {
       minFaceDetectionConfidence: 0.5,
       minFacePresenceConfidence: 0.5,
       minHandLandmarksConfidence: 0.5,
-      outputFaceBlendshapes: true,          // smiling, mouth open, eyes closed...
+      outputFaceBlendshapes: false,         // face output is permanently off: expressions not needed (saves time)
       outputPoseSegmentationMasks: true,    // used to reject "people" that aren't there
     });
     // Holistic finds hands from the body's wrists, so with no body in view (a close-up)
@@ -177,7 +186,7 @@ async function switchPipeline(choice) {
   showState();
   return pipe;
 }
-const PIPE_NAMES = { holistic: 'Holistic', heavy: 'Separate (accurate)', full: 'Separate (fast)' };
+const PIPE_NAMES = { hybrid: 'Auto: accurate body model, Holistic when needed', holistic: 'Holistic', heavy: 'Separate (accurate)', full: 'Separate (fast)' };
 function showState() {
   if (!pipe) return;
   const parts = [opts.body && 'body', opts.hands && 'hands', opts.face && pipe.kind === 'holistic' && 'face'].filter(Boolean);
@@ -244,6 +253,8 @@ const inBox = (p, b) => p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1
 // can fail for a frame or two) only after several misses in a row.
 // `trusted` = this person is already confirmed: then a hand near the face is just a hand
 // near a real face (scratching the head, drinking), not a palm mistaken for a face.
+const MASK_EVERY = 6;
+let maskTick = 0;
 function isRealPerson(lm, world, mask, handLms, trusted = false) {
   const boxes = handLms.map((hl) => handBox(hl));
   if (boxes.some((b) => b.area > CLOSEUP_AREA)) return { ok: false, hard: true, why: 'close-up on a hand' };
@@ -283,7 +294,9 @@ function isRealPerson(lm, world, mask, handLms, trusted = false) {
     }
   }
 
-  if (!mask) return { ok: true, vis, upperOnly };
+  // Reading the mask back from the GPU is the slowest step of a frame, so a person who is
+  // already confirmed is only re-checked every MASK_EVERY frames; new bodies always are.
+  if (!mask || (trusted && maskTick++ % MASK_EVERY !== 0)) return { ok: true, vis, upperOnly };
   const data = mask.getAsFloat32Array();
   const at = (x, y) => {
     const px = Math.min(mask.width - 1, Math.max(0, Math.round(x * mask.width)));
@@ -385,6 +398,7 @@ let tsOffset = 0, lastMpT = 0;
 // behave the same however fast it steps through a clip.
 function processFrame(src, w, h, clock) {
   const t = clock ?? performance.now();
+  const tAll = performance.now();
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
 
   ctx.fillStyle = '#000';
@@ -400,7 +414,9 @@ function processFrame(src, w, h, clock) {
   if (t + tsOffset <= lastMpT) tsOffset = lastMpT + 33 - t;
   const mpT = t + tsOffset;
   lastMpT = mpT;
+  const tA = performance.now();
   const det = detect(src, mpT);
+  const tB = performance.now();
 
   // Hands first: the body checks use them.
   if (opts.hands) {
@@ -431,7 +447,7 @@ function processFrame(src, w, h, clock) {
       rawLm = rawLm.map((p) => (p.x < -EDGE || p.x > 1 + EDGE || p.y < -EDGE || p.y > 1 + EDGE ? { ...p, visibility: 0 } : p));
       // Keep left and right consistent: the model sometimes swaps them (close-ups, an
       // arm crossing the body). If it did, swap the whole body back, hands included.
-      const fix = fixSides(rawLm, rawWorld, det.faceGuard, t);
+      const fix = fixSides(rawLm, rawWorld, det.faceGuard, t, w, h);
       if (fix.swapped) {
         rawLm = fix.lm; rawWorld = fix.world;
         for (const hd of out.hands) if (hd.sideKnown) hd.side = hd.side === 'left' ? 'right' : 'left';
@@ -487,7 +503,10 @@ function processFrame(src, w, h, clock) {
       prevWorld = world; prevT = t;
       drawPose(lm, w, h);
       drawAngleLabels(lm, angles, w, h);
-      out.pose = { landmarks: lm, worldLandmarks: world, angles, head: headPose(lm, w, h), speed: { ...speed } };
+      // raw* = straight from the model, before smoothing: smoothing lags and flattens peaks
+      // (top of a jump, end of a rep), so measurements use the raw points.
+      out.pose = { landmarks: lm, worldLandmarks: world, angles, head: headPose(lm, w, h), speed: { ...speed },
+        rawLandmarks: rawLm, rawWorldLandmarks: rawWorld, rawAngles: jointAngles(rawLm, rawWorld) };
     } else if (lastGood && !check.hard && t - lastGood.t < HOLD_MS) {
       // Lost them for a moment (often motion blur): carry on along their last motion,
       // drawn faded, instead of making the skeleton vanish.
@@ -520,7 +539,11 @@ function processFrame(src, w, h, clock) {
 
   procCount++;
   const el = (performance.now() - procT0) / 1000;
-  if (el > 1) { setText('trackFps', `${(procCount / el).toFixed(1)} fps tracked`); procCount = 0; procT0 = performance.now(); }
+  if (el > 1) {
+    setText('trackFps', `${(procCount / el).toFixed(1)} fps tracked${pipe.kind === 'hybrid' && hybrid.last ? ` · ${hybrid.last}` : ''}`);
+    procCount = 0; procT0 = performance.now();
+  }
+  out.model = pipe.kind === 'hybrid' ? hybrid.last : pipe.choice;
 
   if (!shownFirst) {
     // first frame from any source: show the canvas, tuck the QR away
@@ -530,9 +553,14 @@ function processFrame(src, w, h, clock) {
     window.setQrVisible?.(false);
   }
 
+  const tC = performance.now();
   window.tracking = out;
   window.dispatchEvent(new CustomEvent('tracking', { detail: out }));
   renderPanel(out);
+  // Where a frame's time goes (ms): model, our checks + drawing, listeners + side panel.
+  const tD = performance.now();
+  out.timing = { model: tB - tA, ours: tA - tAll + (tC - tB), after: tD - tC };
+  window.trackTiming = out.timing;
   return out;
 }
 
@@ -554,9 +582,33 @@ let sideRef = null;   // where each limb was on the last frame: { t, lm }
 //  1. Face (most reliable, when the face mesh sees a fairly frontal face): the
 //     cheek-to-cheek direction says which side of the picture the person's left is on;
 //     the shoulders must agree.
-//  2. Continuity: limbs move smoothly, so if "left elbow/wrist/knee/ankle" are now
+//  2. Side-on geometry: when the person stands side-on, the side nearer the camera
+//     follows from which way they face: facing right in the picture → their RIGHT side
+//     is nearer (facing left → left). The model's labels say which side it thinks is
+//     nearer (world z). If the two disagree, the whole body was labelled the wrong way
+//     round. (Continuity can't catch this: the far limbs are hidden, and the model often
+//     flips all labels at once while the person stands still.)
+//  3. Continuity: limbs move smoothly, so if "left elbow/wrist/knee/ankle" are now
 //     where the right ones were a moment ago (and vice versa), the labels flipped.
-function fixSides(lm, world, face, t) {
+function sideOnSwap(lm, world, w, h) {
+  if (!world) return false;
+  const ok = (i) => lm[i].visibility >= 0.3;
+  if (![0, 11, 12, 23, 24].every((i) => lm[i] && world[i]) || !ok(0) || !(ok(11) || ok(12))) return false;
+  const shX = (lm[11].x + lm[12].x) / 2 * w, shY = (lm[11].y + lm[12].y) / 2 * h, hipY = (lm[23].y + lm[24].y) / 2 * h;
+  const torso = Math.abs(hipY - shY);
+  if (torso < 20) return false;
+  const width = Math.abs(lm[11].x - lm[12].x) * w;
+  if (width > 0.35 * torso) return false;                              // not side-on
+  const facing = lm[0].x * w - shX;                                    // nose ahead of the shoulders
+  if (Math.abs(facing) < 0.15 * torso) return false;                   // can't tell which way they face
+  const dz = (world[11].z + world[23].z) - (world[12].z + world[24].z); // < 0: "left" is nearer
+  if (Math.abs(dz) < 0.12) return false;                               // model isn't sure which is nearer
+  const labelNear = dz < 0 ? 'L' : 'R';
+  const trueNear = facing > 0 ? 'R' : 'L';
+  return labelNear !== trueNear;
+}
+
+function fixSides(lm, world, face, t, w = 1, h = 1) {
   let swap = false, why = null;
   const vis = (i) => lm[i].visibility >= 0.3;
   if (face && vis(11) && vis(12)) {
@@ -566,6 +618,7 @@ function fixSides(lm, world, face, t) {
     const sx = lm[11].x - lm[12].x;
     if (frontal > 0.6 && Math.abs(sx) > 0.02 && Math.sign(sx) !== Math.sign(fx)) { swap = true; why = 'face'; }
   }
+  if (!why && sideOnSwap(lm, world, w, h)) { swap = true; why = 'side-on'; }
   if (!why && sideRef && t - sideRef.t < 600) {
     let keep = 0, cross = 0, n = 0;
     for (const [l, r] of [[13, 14], [15, 16], [25, 26], [27, 28]]) {
@@ -586,7 +639,32 @@ function fixSides(lm, world, face, t) {
 // One call per frame to whichever pipeline is loaded; same output shape for both.
 // hands = what's shown and described; guard = hands used only for the ghost checks.
 function detect(src, t) {
-  if (pipe.kind === 'holistic') {
+  if (pipe.kind === 'hybrid') return detectHybrid(src, t);
+  if (pipe.kind === 'holistic') return detectHolistic(src, t);
+  return detectSeparate(src, t);
+}
+
+// Hybrid ("Auto"): the separate accurate body model is ~2.5x faster than Holistic
+// (about 33 vs 80 ms a frame, so ~30 instead of ~12 fps), but on the test set it lost
+// seated and side-on people that Holistic still found. So: the fast model every frame,
+// and when it finds nobody, Holistic for that frame and the next HYBRID_HOLD_MS (models
+// are not switched back and forth every frame, which would make the points jump).
+const HYBRID_HOLD_MS = 2000;
+const hybrid = { holisticUntil: -1e9, last: null };
+function detectHybrid(src, t) {
+  if (t >= hybrid.holisticUntil) {
+    const d = detectSeparate(src, t);
+    if (d.pose) { hybrid.last = 'fast body model'; return d; }
+    d.close();
+  }
+  const d = detectHolistic(src, t);
+  if (d.pose && t >= hybrid.holisticUntil) hybrid.holisticUntil = t + HYBRID_HOLD_MS;
+  hybrid.last = 'Holistic (fast model lost the person)';
+  return d;
+}
+
+function detectHolistic(src, t) {
+  {
     const r = pipe.holistic.detectForVideo(src, t);
     const hands = [];
     for (const [side, L, Wl] of [['left', r.leftHandLandmarks, r.leftHandWorldLandmarks], ['right', r.rightHandLandmarks, r.rightHandWorldLandmarks]]) {
@@ -625,6 +703,9 @@ function detect(src, t) {
       close: () => r.poseSegmentationMasks?.forEach((m) => m.close()),
     };
   }
+}
+
+function detectSeparate(src, t) {
   let hr = null;
   if (opts.hands) hr = pipe.hands.detectForVideo(src, t);
   else if (opts.body && guardFrame++ % 3 === 0) {
@@ -679,7 +760,7 @@ window.phoneCamTracker = {
   get ready() { return !!pipe; },
   get opts() { return { ...opts }; },
   // set toggles without auto-switching the model (the evaluator picks the model itself)
-  setOpts(o) { const prev = { ...opts }; Object.assign(opts, o); syncBoxes(); showState(); return prev; },
+  setOpts(o) { const prev = { ...opts }; Object.assign(opts, o, BODY_ONLY); syncBoxes(); showState(); return prev; },
 };
 
 function jointAngles(lm, world) {
@@ -723,14 +804,13 @@ function nextVideoFrame(v) {
   });
 }
 
-// Model choice: "auto" always uses Holistic. On the test set it beat the separate
-// body model (87% vs 57% on posture/facing/head), mostly because the separate model
-// loses seated and side-on people. The boxes then only choose what is shown and
-// described; the other models stay available in the menu for comparison.
+// Model choice: "auto" = hybrid (see detectHybrid): the accurate separate body model
+// every frame (~30 fps), Holistic only while that model loses the person (seated,
+// side-on). Holistic alone was ~12 fps. The other models stay in the menu for comparison.
 const modelSel = document.getElementById('opt-model');
 function wantedChoice() {
   const v = modelSel?.value || 'auto';
-  return v === 'auto' ? 'holistic' : v;
+  return v === 'auto' ? 'hybrid' : v;
 }
 function autoPipeline() {
   const c = wantedChoice();

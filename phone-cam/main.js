@@ -17,6 +17,7 @@ async function createWindow() {
     server = await start({
       certDir: path.join(app.getPath('userData'), 'certs'),
       testsetDir: path.join(app.getPath('videos'), 'phone-cam', 'testset'),
+      motionLogDir: path.join(app.getPath('videos'), 'phone-cam', 'motion-logs'),
     });
   } catch (e) {
     dialog.showErrorBox('Phone Camera',

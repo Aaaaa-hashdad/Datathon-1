@@ -238,24 +238,27 @@
         <h3>Tracking</h3>
         <div class="toggles">
           <label><input type="checkbox" id="opt-body"> Body</label>
-          <label><input type="checkbox" id="opt-hands"> Hands</label>
-          <label><input type="checkbox" id="opt-face"> Face</label>
           <label><input type="checkbox" id="opt-video"> Video</label>
         </div>
         <select id="opt-model" title="Auto picks the lightest model that covers what's ticked">
-          <option value="auto" selected>Model: Auto (from the boxes above)</option>
-          <option value="holistic">Model: Holistic (body + hands + face)</option>
+          <option value="auto" selected>Model: Auto (fast, Holistic when needed)</option>
+          <option value="holistic">Model: Holistic (body)</option>
           <option value="heavy">Model: Separate, accurate body</option>
           <option value="full">Model: Separate, fast body</option>
         </select>
-        <small class="muted">Auto uses Holistic (most accurate on the test set). The boxes
-          choose what's shown and described; hidden hands still guard against false bodies.</small>
+        <small class="muted">Body only: hands and face are never shown, described or saved.
+          Auto runs the accurate body model (~30 fps) and switches to Holistic only while that model loses you (seated, side-on).</small>
         <div class="legend">
           <span style="--c:#ffd54f">Head</span><span style="--c:#4fc3f7">L arm</span>
           <span style="--c:#f06292">R arm</span><span style="--c:#81c784">L leg</span>
-          <span style="--c:#ffb74d">R leg</span><span style="--c:#ba68c8">Hands</span>
+          <span style="--c:#ffb74d">R leg</span>
         </div>
         <div id="bodyState" class="muted">No body detected</div>
+        <div class="mcpRow">
+          <label title="Optional. Makes the room lock's centimetres exact (otherwise estimated from the body).">Your height <input id="roomHeight" type="number" min="100" max="230" step="1" placeholder="cm" style="width:5em"> cm</label>
+          <button id="roomRelock" class="mini">Re-lock room</button>
+        </div>
+        <div id="bodyBoxState" class="muted">Room lock: stand straight and still for 2 s, whole body and feet in view (phone on a stand).</div>
       </section>
 
       <section>

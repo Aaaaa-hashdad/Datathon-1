@@ -190,6 +190,7 @@ startBtn.onclick = async () => {
     setMode('idle');
     return;
   }
+  startSensors();               // must start from the tap (iPhone asks permission)
   try {
     if (!stream) await openCamera();
     running = true;
@@ -209,6 +210,42 @@ document.getElementById('flip').onclick = async () => {
   if (stream) await openCamera().catch((e) => statusEl.textContent = e.message);
 };
 document.getElementById('quality').onchange = () => { if (stream) openCamera(); };
+
+// ---------------- motion sensors ----------------
+// The PC's room lock uses gravity for the true vertical in the picture, and the
+// rotation rate / gravity direction to notice when the phone itself moved.
+// Sent ~5x a second while streaming. Sign conventions differ between phones (iOS
+// reports gravity the other way round); the PC checks the sign against the body.
+let sensorsOn = false, grav = null, rotMax = 0;
+async function startSensors() {
+  if (sensorsOn || !('DeviceMotionEvent' in window)) return;
+  try {
+    if (typeof DeviceMotionEvent.requestPermission === 'function'
+        && (await DeviceMotionEvent.requestPermission()) !== 'granted') return;
+  } catch { return; }
+  sensorsOn = true;
+  window.addEventListener('devicemotion', (e) => {
+    const a = e.accelerationIncludingGravity;
+    if (a?.x != null) {
+      const v = [a.x, a.y, a.z];
+      grav = grav ? grav.map((g, i) => g * 0.85 + v[i] * 0.15) : v;   // low-pass: keep only gravity
+    }
+    const r = e.rotationRate;
+    if (r) rotMax = Math.max(rotMax, Math.abs(r.alpha || 0), Math.abs(r.beta || 0), Math.abs(r.gamma || 0));
+  });
+  setInterval(() => {
+    if (!running || !grav) return;
+    const [gx, gy, gz] = grav, n = Math.hypot(gx, gy, gz) || 1;
+    const th = ((screen.orientation?.angle ?? window.orientation ?? 0) * Math.PI) / 180;
+    // Up in screen coordinates (x right, y up), then in video-image coordinates (y down).
+    // The front camera's picture is left-right flipped relative to the screen.
+    const sx = gx * Math.cos(th) - gy * Math.sin(th), sy = gx * Math.sin(th) + gy * Math.cos(th);
+    const upImg = [(facing === 'user' ? -sx : sx) / n, -sy / n];
+    const body = JSON.stringify({ up: [gx / n, gy / n, gz / n], upImg, tiltDeg: Math.round(Math.asin(Math.max(-1, Math.min(1, gz / n))) * 1800 / Math.PI) / 10, rotMax: Math.round(rotMax), facing });
+    rotMax = 0;
+    fetch('/sensor', { method: 'POST', body, headers: { 'Content-Type': 'application/json' } }).catch(() => {});
+  }, 200);
+}
 </script>
 </body>
 </html>

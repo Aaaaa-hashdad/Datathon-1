@@ -21,11 +21,10 @@ const V = {
 };
 // Setups to compare: which parts are on, and which model runs them.
 const CONFIGS = [
-  { id: 'all', label: 'All on · Holistic', pipe: 'holistic', opts: { body: true, hands: true, face: true }, on: true },
-  { id: 'body', label: 'Body only · accurate body model', pipe: 'heavy', opts: { body: true, hands: false, face: false }, on: true },
-  { id: 'bodyhands', label: 'Body + hands · separate models', pipe: 'heavy', opts: { body: true, hands: true, face: false } },
-  { id: 'holbody', label: 'Body only · Holistic', pipe: 'holistic', opts: { body: true, hands: false, face: false } },
-  { id: 'bodyfast', label: 'Body only · fast body model', pipe: 'full', opts: { body: true, hands: false, face: false } },
+  // Body only (hands and face are permanently off in the tracker).
+  { id: 'holbody', label: 'Body · Holistic', pipe: 'holistic', opts: { body: true, hands: false, face: false }, on: true },
+  { id: 'body', label: 'Body · accurate body model', pipe: 'heavy', opts: { body: true, hands: false, face: false }, on: true },
+  { id: 'bodyfast', label: 'Body · fast body model', pipe: 'full', opts: { body: true, hands: false, face: false } },
 ];
 const CFG = Object.fromEntries(CONFIGS.map((c) => [c.id, c]));
 const ACTIVITIES = ['waving', 'clapping', 'jumping', 'walking', 'stepping', 'nodding', 'shaking_head', 'squats', 'curls', 'jumping_jacks'];

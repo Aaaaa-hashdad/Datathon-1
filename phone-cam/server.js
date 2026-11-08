@@ -19,6 +19,7 @@ const https = require('https');
 const QRCode = require('qrcode');
 const selfsigned = require('selfsigned');
 const { createMcp } = require('./mcp');
+const { createMotionLog } = require('./motionlog');
 
 const PUBLIC = path.join(__dirname, 'public');
 
@@ -81,6 +82,7 @@ async function start({
   httpsPort = Number(process.env.HTTPS_PORT || 8443),
   certDir = path.join(__dirname, 'certs'),
   testsetDir = process.env.TESTSET_DIR || path.join(__dirname, 'testset'),
+  motionLogDir = process.env.MOTION_LOG_DIR || path.join(__dirname, 'motion-logs'),
 } = {}) {
   fs.mkdirSync(path.join(testsetDir, 'reports'), { recursive: true });
   let latest = null;          // Buffer (JPEG)
@@ -120,6 +122,7 @@ async function start({
   // Phone posts an offer, the viewer long-polls for it and posts an answer, the phone
   // long-polls for the answer. After that the video flows peer-to-peer, not through here.
   const rtc = { offer: null, answer: null, offerWaiters: new Set(), answerWaiters: new Set() };
+  let sensor = null;           // latest phone motion-sensor reading (see /sensor)
   const sendJson = (res, obj, code = 200) => {
     res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(obj));
@@ -136,7 +139,9 @@ async function start({
     req.on('close', () => { clearTimeout(w.timer); waiters.delete(w); });
   }
 
-  const mcp = createMcp();
+  // Motion log: every live sample -> <user>/<day>/<session>.xlsx (local + Supabase)
+  const motionLog = createMotionLog({ dir: motionLogDir });
+  const mcp = createMcp({ onState: motionLog.addSample, motionLog });
 
   // ---- test set ----
   // A folder of short video clips, each with an optional <clip>.labels.json describing
@@ -250,6 +255,23 @@ async function start({
       return park(rtc.answerWaiters, req, res, 15000, { id });
     }
 
+    // Phone motion sensors (gravity + rotation), for the room lock's true vertical and
+    // "camera moved" check. The phone posts (like /frame); only this PC may read it back.
+    if (url.pathname === '/sensor') {
+      if (req.method === 'POST') {
+        let body = '';
+        req.on('data', (c) => { body += c; if (body.length > 1e4) req.destroy(); });
+        req.on('end', () => {
+          try { sensor = { ...JSON.parse(body), t: Date.now() }; } catch {}
+          res.writeHead(204).end();
+        });
+        return;
+      }
+      const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+      if (!local) return res.writeHead(403).end();
+      return sendJson(res, sensor && Date.now() - sensor.t < 2000 ? sensor : { none: true });
+    }
+
     if (req.method === 'POST' && url.pathname === '/frame') {
       const chunks = [];
       let size = 0;
@@ -311,6 +333,9 @@ async function start({
     if (url.pathname === '/mcp') return mcp.mcpRoute(req, res);
     if (url.pathname === '/state' || url.pathname.startsWith('/state/')) return mcp.stateRoute(req, res, url);
 
+    // ---- motion log: Excel files per user / day / session (local + Supabase Storage) ----
+    if (url.pathname.startsWith('/motionlog/')) return motionLog.route(req, res, url);
+
     if (url.pathname === '/info') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ phoneUrls }));
@@ -342,7 +367,10 @@ async function start({
     if (!full.startsWith(root + path.sep)) return res.writeHead(403).end();
     fs.readFile(full, (err, data) => {
       if (err) return res.writeHead(404).end('not found');
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(full)] || 'application/octet-stream' });
+      // Our own pages and scripts must never be served stale (a phone that kept an old
+      // phone.html never sent its motion sensors). Big MediaPipe/model files may cache.
+      const ours = root === PUBLIC && /\.(html|js|mjs|css)$/.test(full);
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(full)] || 'application/octet-stream', ...(ours && { 'Cache-Control': 'no-cache' }) });
       res.end(data);
     });
   }

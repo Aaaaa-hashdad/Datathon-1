@@ -15,7 +15,7 @@
 
 const HISTORY_SECONDS = 180;
 
-function createMcp() {
+function createMcp({ onState, motionLog } = {}) {
   const history = [];          // [{ t (ms), ...state }]
   let snapshot = null;         // { t, jpeg: Buffer }
   let lastToolCall = null;     // { t, tool }
@@ -43,6 +43,8 @@ function createMcp() {
       if (url.pathname === '/state' && req.method === 'POST') {
         const s = JSON.parse((await readBody(req, 2e6)).toString('utf8'));
         s.t = Date.now();
+        try { onState?.(s); } catch (e) { console.error('[state hook]', e.message); }
+        delete s.frames;            // per-frame data is for the motion log; keep live history light
         history.push(s);
         while (history.length && history[0].t < s.t - HISTORY_SECONDS * 1000) history.shift();
         return json(res, 200, { ok: true, lastToolCall });
@@ -170,6 +172,57 @@ function createMcp() {
     };
   }
 
+  // ---------- recorded motion logs (Excel files per user / day / session) ----------
+  const NL = String.fromCharCode(10);
+  async function listMotionLogs({ user, day } = {}) {
+    if (!motionLog) return text('Motion logging is off.', null, true);
+    const prefix = [user, user && day].filter(Boolean).join('/');
+    const { items, current } = await motionLog.listLogs(prefix);
+    const what = !user ? 'Users' : !day ? `Days for ${user}` : `Sessions for ${user} on ${day} (file name = start time HH-MM)`;
+    const lines = items.map((i) => `- ${i.name}${i.folder ? '/' : i.size ? `  (${Math.round(i.size / 1024)} KB)` : ''}`);
+    return text([
+      `${what}:`, ...(lines.length ? lines : ['(none)']),
+      '',
+      current ? `Recording now: ${current.key} (${current.rows} samples). Read it with path "current".` : 'Nothing is being recorded right now.',
+      !user ? 'Next: list_motion_logs with user, then with user + day, then read_motion_log with path "user/day/HH-MM.xlsx".' : '',
+    ].join(NL).trim());
+  }
+
+  const ANGLE_COLS = ['L elbow', 'R elbow', 'L shoulder', 'R shoulder', 'L hip', 'R hip', 'L knee', 'R knee'].map((k) => `${k} angle`);
+  async function readMotionLog({ path: p = 'current', from_s, to_s, columns = 'angles', max_rows = 200 } = {}) {
+    if (!motionLog) return text('Motion logging is off.', null, true);
+    const s = await motionLog.readSession(p);
+    let rows = s.rows.filter((r) => (from_s == null || r.elapsed_s >= from_s) && (to_s == null || r.elapsed_s <= to_s));
+    const total = rows.length;
+    const cap = Math.max(10, Math.min(600, Number(max_rows) || 200));
+    const step = Math.ceil(total / cap) || 1;
+    if (step > 1) rows = rows.filter((_, i) => i % step === 0);
+    const pos = motionLog.JOINTS.flatMap((k) => ['x', 'y', 'z'].map((c) => `${k} ${c}`));
+    // Room-locked columns (older files have "box" columns instead; blank columns are dropped below).
+    const room = ['lock', 'dist', 'foot_cm', 'feet', ...motionLog.JOINTS.flatMap((k) => ['X', 'Y'].map((c) => `${k} room ${c}`)),
+      'calib', ...motionLog.JOINTS.flatMap((k) => ['X', 'Y'].map((c) => `${k} box ${c}`))];
+    const raw = ANGLE_COLS.map((c) => c.replace(/ angle$/, ' raw angle'));
+    const pick = { positions: pos, room, box: room, raw_angles: raw, all: [...pos, ...room, ...ANGLE_COLS, ...raw] }[columns] || [...ANGLE_COLS, 'foot_cm', 'feet'];
+    const cols = ['recording', 'elapsed_s', 'selected_exercise', 'tracking', 'model', ...pick];
+    const used = cols.filter((c) => c === 'elapsed_s' || rows.some((r) => r[c] != null && r[c] !== ''));   // drop all-blank columns
+    const csv = [used.join(','), ...rows.map((r) => used.map((c) => (r[c] == null ? '' : String(r[c]).includes(',') ? `"${r[c]}"` : r[c])).join(','))];
+    const span = rows.length ? `${rows[0].elapsed_s}–${rows[rows.length - 1].elapsed_s} s` : 'no samples';
+    const rate = s.rows.length > 1 ? (s.rows.length - 1) / Math.max(0.001, s.rows[s.rows.length - 1].elapsed_s - s.rows[0].elapsed_s) : null;
+    // Jumps are measured on every frame, so list them in full even when rows are thinned out.
+    const jumps = (s.jumps || []).filter((j) => (from_s == null || j.land_s >= from_s) && (to_s == null || j.takeoff_s <= to_s));
+    const jcols = ['n', 'recording', 'takeoff_s', 'land_s', 'airtime_s', 'height_airtime_cm', 'feet_peak_cm', 'hip_rise_cm', 'agree_cm', 'fps', 'quality'];
+    return text([
+      `Motion log ${s.key}${s.open ? ' (still recording)' : ''}: user ${s.user}, ${s.day} ${s.start}–${s.end}, ${s.rows.length} samples${rate ? ` (~${Math.round(rate)} per second on average, pauses included)` : ''}.`,
+      `User-selected exercise: ${s.selected.join(', ') || 'none'} (a claim; check it against the movement).`,
+      ...(s.locks || []),
+      `Showing ${rows.length} of ${total} samples in ${span}${step > 1 ? `, every ${step}th sample (zoom in with from_s/to_s for full frame rate)` : ''}; columns: ${columns}. All-blank columns are left out.`,
+      ...motionLog.GUIDE.map((g) => `Note: ${g}`),
+      '', `Jumps in this range: ${jumps.length}`,
+      ...(jumps.length ? [jcols.join(','), ...jumps.map((j) => jcols.map((c) => j[c] ?? '').join(','))] : []),
+      '', ...csv,
+    ].join(NL));
+  }
+
   function text(t, structured, isError) {
     return { content: [{ type: 'text', text: t }], ...(structured && { structuredContent: structured }), ...(isError && { isError: true }) };
   }
@@ -212,10 +265,31 @@ function createMcp() {
       inputSchema: { type: 'object', properties: {} },
       run: getSnapshot,
     },
+    {
+      name: 'list_motion_logs',
+      description: 'Browse the recorded motion logs (one Excel file per workout session, stored per user and day, also in Supabase). No arguments = users; with user = days; with user + day = session files.',
+      inputSchema: { type: 'object', properties: {
+        user: { type: 'string', description: 'User folder name' },
+        day: { type: 'string', description: 'YYYY-MM-DD' },
+      } },
+      run: listMotionLogs,
+    },
+    {
+      name: 'read_motion_log',
+      description: 'Read a recorded session’s raw movement data as CSV: one row per video frame (~30 per second) with joint angles, 3D joint positions and room-locked positions (cm above the floor), plus every measured jump (air time, height). It contains NO labels: work out yourself what the person did (which exercise, how many reps, range of motion, tempo, left vs right, pauses, jump heights), and check the user-selected exercise against the movement. Tip: start with columns "angles" for the whole session, then zoom in with from_s/to_s and "room" or "raw_angles".',
+      inputSchema: { type: 'object', properties: {
+        path: { type: 'string', description: '"current" (default, the session being recorded) or user/YYYY-MM-DD/HH-MM.xlsx from list_motion_logs' },
+        from_s: { type: 'number', description: 'Start, seconds since the session began' },
+        to_s: { type: 'number', description: 'End, seconds since the session began' },
+        columns: { type: 'string', enum: ['angles', 'raw_angles', 'positions', 'room', 'box', 'all'], description: 'angles (default): 8 smoothed joint angles + feet contact; raw_angles: the same angles unsmoothed (exact peaks); positions: body shape, x/y/z of 17 points in cm from the hips; room: where the body is in the room, X/Y in cm from the floor point between the feet, plus foot_cm, feet (ground/air) and dist: use it for jumps, steps, squat depth ("box" = same, for older files); all: everything' },
+        max_rows: { type: 'number', description: 'Max rows to return, evenly sampled (default 200, max 600)' },
+      } },
+      run: readMotionLog,
+    },
   ];
 
   // ---------- /mcp: JSON-RPC 2.0 over Streamable HTTP ----------
-  function handleRpc(msg) {
+  async function handleRpc(msg) {
     const reply = (result) => ({ jsonrpc: '2.0', id: msg.id, result });
     const fail = (code, message) => ({ jsonrpc: '2.0', id: msg.id, error: { code, message } });
     switch (msg.method) {
@@ -227,6 +301,7 @@ function createMcp() {
           instructions: 'Live body, hand and face tracking of a person in front of a phone camera. '
             + 'Use get_current_state for "what am I doing", get_recent_activity for summaries and exercise '
             + 'analysis, get_joint_angle_history for reps/range of motion, and get_snapshot to see the frame. '
+            + 'Recorded workouts: list_motion_logs, then read_motion_log (raw angles/positions, no labels: you interpret them). '
             + 'Left/right always mean the person\'s own left/right.',
         });
       case 'ping':
@@ -237,7 +312,7 @@ function createMcp() {
         const tool = TOOLS.find((t) => t.name === msg.params?.name);
         if (!tool) return fail(-32602, `Unknown tool: ${msg.params?.name}`);
         lastToolCall = { t: Date.now(), tool: tool.name };
-        try { return reply(tool.run(msg.params?.arguments || {})); }
+        try { return reply(await tool.run(msg.params?.arguments || {})); }
         catch (e) { return reply(text(`Tool failed: ${e.message}`, null, true)); }
       }
       default:
@@ -254,7 +329,7 @@ function createMcp() {
     try { body = JSON.parse((await readBody(req, 1e6)).toString('utf8')); }
     catch { return json(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); }
     const msgs = Array.isArray(body) ? body : [body];
-    const replies = msgs.filter((m) => m && m.id !== undefined && m.method).map(handleRpc);
+    const replies = await Promise.all(msgs.filter((m) => m && m.id !== undefined && m.method).map(handleRpc));
     if (!replies.length) { res.writeHead(202); return res.end(); }     // only notifications / responses
     return json(res, 200, Array.isArray(body) ? replies : replies[0]);
   }

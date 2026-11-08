@@ -214,6 +214,9 @@ export function createBrain() {
   const counters = { squats: 0, 'L curls': 0, 'R curls': 0, 'jumping jacks': 0, jumps: 0, claps: 0 };
   const phase = { squat: 'up', L: 'down', R: 'down', jack: 'closed', clap: 'apart' };
   let squatDepth = 180;
+  // Curls: range-of-motion detector per arm (see "curls" below).
+  const newCurl = () => ({ samples: [], phase: 'down', lo: 180, hi: 0, since: 0 });
+  const curl = { L: newCurl(), R: newCurl() };
   const active = {};                  // ongoing activities -> true
   const stable = { posture: null, gestures: {}, palm: {}, open: {}, view: null };
   const recentPosture = [];
@@ -242,6 +245,7 @@ export function createBrain() {
     for (const k of Object.keys(handHist)) handHist[k].length = 0;
     for (const k of Object.keys(counters)) counters[k] = 0;
     Object.assign(phase, { squat: 'up', L: 'down', R: 'down', jack: 'closed', clap: 'apart' });
+    curl.L = newCurl(); curl.R = newCurl();
     for (const k of Object.keys(active)) delete active[k];
     Object.assign(stable, { posture: null, gestures: {}, palm: {}, open: {}, view: null });
     prevMotion.body = new Set(); prevMotion.hands = new Set();
@@ -749,14 +753,32 @@ export function createBrain() {
       }
     }
 
-    // curls
+    // curls: count by range of motion, not fixed angles. Real curls on camera often
+    // read ~100° at the top and ~140° at the bottom (foreshortening, holding a weight
+    // in front), so fixed 60°/145° lines missed them and could get stuck "up".
+    // A rep = the elbow closes CURL_DOWN° from its recent most-open angle (ending
+    // below CURL_TOP), then opens CURL_UP° again. Upper arm must stay near the side.
+    const CURL_DOWN = 30, CURL_UP = 22, CURL_TOP = 125, CURL_WINDOW = 3000, CURL_STUCK = 5000;
     for (const [s, key] of [['left', 'L'], ['right', 'R']]) {
-      const a = arms[s];
-      if (!a || a.partial || a.shAng == null || a.shAng > 50) continue;
-      if (phase[key] === 'down' && a.elbow < 60) phase[key] = 'up';
-      else if (phase[key] === 'up' && a.elbow > 145) {
-        phase[key] = 'down'; counters[`${key} curls`]++;
-        log(t, `${s === 'left' ? 'Left' : 'Right'} arm curl #${counters[`${key} curls`]}`);
+      const a = arms[s], c = curl[key];
+      if (!a || a.partial || a.elbow == null || a.shAng == null || a.shAng > 60) {
+        if (c.samples.length && t - c.samples[c.samples.length - 1].t > 1500) curl[key] = newCurl();
+        continue;
+      }
+      c.samples.push({ t, v: a.elbow });
+      while (c.samples.length && c.samples[0].t < t - CURL_WINDOW) c.samples.shift();
+      if (c.phase === 'down') {
+        c.hi = Math.max(...c.samples.map((p) => p.v));
+        if (c.hi - a.elbow >= CURL_DOWN && a.elbow < CURL_TOP) { c.phase = 'up'; c.lo = a.elbow; c.since = t; }
+      } else {
+        c.lo = Math.min(c.lo, a.elbow);
+        if (a.elbow - c.lo >= CURL_UP) {
+          counters[`${key} curls`]++;
+          log(t, `${s === 'left' ? 'Left' : 'Right'} arm curl #${counters[`${key} curls`]} (elbow ${r0(c.lo)}°–${r0(c.hi)}°)`);
+          c.phase = 'down'; c.samples = [{ t, v: a.elbow }];
+        } else if (t - c.since > CURL_STUCK) {          // held at the top: start over, never get stuck
+          c.phase = 'down'; c.samples = [{ t, v: a.elbow }];
+        }
       }
     }
 
