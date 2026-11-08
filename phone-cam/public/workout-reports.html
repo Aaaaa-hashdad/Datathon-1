@@ -103,7 +103,7 @@ function table(rows) {
 
 function showLeaderboard() {
   document.title = 'Leaderboard';
-  root.innerHTML = `<h1>Leaderboard</h1><p class="muted">Each person’s best analyzed set, ranked by form score and reps. Ties are ordered by username.</p>
+  root.innerHTML = `<h1>Leaderboard</h1><p class="muted">Each person’s best analyzed set, ranked by form score (3–10) and reps. Ties are ordered by username.</p>
     <div class="filters"><label>Period<select id="period"><option value="week">This week</option><option value="all_time">All time</option></select></label>
     <label>Exercise<select id="exercise" disabled><option value="">Loading…</option></select></label>
     <button type="button" id="publish">Publish my saved sets</button></div>
@@ -125,7 +125,7 @@ function showLeaderboard() {
       results.innerHTML = board.entries.length ? `<div class="card scroll"><table aria-label="Workout rankings"><thead><tr>
         <th scope="col">Rank</th><th scope="col">User</th><th scope="col">Form score</th><th scope="col">Reps</th></tr></thead><tbody>${board.entries.map((row) =>
           `<tr${row.is_me ? ' class="me"' : ''}><td>${row.rank}</td><td>${esc(row.username)}${row.is_me ? ' (you)' : ''}</td><td>${row.score} / 10</td><td>${row.reps}</td></tr>`).join('')}</tbody></table></div>`
-        : '<p class="muted">No published sets for this period yet.</p>';
+        : '<p class="muted">No published scores for this selection yet.</p>';
     } catch (error) {
       if (id === latest) results.textContent = error.message;
     }

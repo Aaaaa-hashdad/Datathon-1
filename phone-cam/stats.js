@@ -13,7 +13,7 @@
 //
 // Routes (this PC's viewer only): GET /stats/data, POST /stats/analyze?set=<key>#<rec>.
 
-const { splitSets, normalizeResult } = require('./feedback');
+const { splitSets, normalizeResult, SCORE_RUBRIC } = require('./feedback');
 
 const MIN_FRAMES = 20, MIN_SECONDS = 3;
 
@@ -61,9 +61,10 @@ function createStats({ motionLog, feedback }) {
       s.analysis = {
         items: r.exercises.map((e) => ({
           exercise: e.exercise, reps: e.reps, side: e.side, mainJoint: e.main_joint, startS: e.start_s, endS: e.end_s,
-          romMin: e.rom_min_deg, romMax: e.rom_max_deg, secPerRep: e.sec_per_rep, score: e.form_score,
+          romMin: e.rom_min_deg, romMax: e.rom_max_deg, secPerRep: e.sec_per_rep, score: e.form_score, formPoints: e.form_points,
+          scoreLimit: e.form_limit,
         })),
-        bestJumpCm: r.best_jump_cm, text: a.text || '', at: a.analyzedAt,
+        bestJumpCm: r.best_jump_cm, currentScore: r.rubric === SCORE_RUBRIC, text: a.text || '', at: a.analyzedAt,
       };
     }
     sets.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
@@ -75,10 +76,10 @@ function createStats({ motionLog, feedback }) {
     // per exercise, most-done first (this order also fixes each exercise's colour)
     const ex = new Map();
     for (const a of items) {
-      const e = ex.get(a.exercise) || { name: a.exercise, sets: 0, reps: 0, last: null, tempos: [], scores: [], romBest: null, joint: null };
+      const e = ex.get(a.exercise) || { name: a.exercise, sets: 0, reps: 0, last: null, tempos: [], scores: [], earlierScores: [], romBest: null, joint: null };
       e.sets++; e.reps += a.reps || 0; e.last = a.set.day;
       if (a.secPerRep) e.tempos.push(a.secPerRep);
-      if (a.score) e.scores.push(a.score);
+      if (a.score) (a.set.analysis.currentScore ? e.scores : e.earlierScores).push(a.score);
       if (a.romMin != null && a.romMax != null) {
         const range = a.romMax - a.romMin;
         if (e.romBest == null || range > e.romBest) e.romBest = Math.round(range);
@@ -89,7 +90,9 @@ function createStats({ motionLog, feedback }) {
     const avg = (xs) => (xs.length ? Math.round((xs.reduce((p, q) => p + q, 0) / xs.length) * 10) / 10 : null);
     const exercises = [...ex.values()]
       .sort((a, b) => b.sets - a.sets || b.reps - a.reps || a.name.localeCompare(b.name))
-      .map((e) => ({ name: e.name, sets: e.sets, reps: e.reps, last: e.last, bestRangeDeg: e.romBest, joint: e.joint, avgSecPerRep: avg(e.tempos), avgScore: avg(e.scores) }));
+      .map((e) => ({ name: e.name, sets: e.sets, reps: e.reps, last: e.last, bestRangeDeg: e.romBest,
+        joint: e.joint, avgSecPerRep: avg(e.tempos), avgScore: avg(e.scores.length ? e.scores : e.earlierScores),
+        earlierScore: !e.scores.length && e.earlierScores.length > 0 }));
 
     const daily = days.map((day) => {
       const ds = sets.filter((s) => s.day === day);

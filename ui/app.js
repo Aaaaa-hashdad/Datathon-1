@@ -731,9 +731,13 @@
         else { flush(); html += `<p${/^Exercise:/i.test(l) ? ' class="fb-head"' : ''}>${esc(l.replace(/\*\*/g, ''))}</p>`; }
       }
       flush();
+      const scores = (data.result?.exercises || []).map((item) => {
+        const score = item.form_score == null ? 'Unscored' : `${item.form_score} / 10`;
+        return `<p class="small muted">${esc(item.exercise)} · ${score}</p>`;
+      }).join('');
       const set = data.set ? `<p class="small muted">Set of ${data.set.seconds} s · ${data.set.frames} frames</p>` : '';
       const retry = data.published === false ? '<p class="small muted">Saved locally. Use Publish my saved sets on the Leaderboard to try again.</p>' : '';
-      box.innerHTML = html + set + retry;
+      box.innerHTML = html + scores + set + retry;
     }
 
     function destroy() {

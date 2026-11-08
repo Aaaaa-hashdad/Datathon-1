@@ -11,14 +11,17 @@ Ties share a rank (1, 2, 2, 4).
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy.orm import Session, aliased
 
 from .models import ScanSet, User, WorkoutResult, utcnow
-from .schemas import LeaderboardEntry, LeaderboardOut, MyStanding
+from .schemas import LeaderboardEntry, LeaderboardOut, MyStanding, WorkoutRubric
 from .scoring import Exercise
 
 Period = Literal["week", "all_time"]
+# Client recording IDs never contain a colon. Keep each rubric's score under its
+# own key so a stale client cannot replace a newer analysis.
+WORKOUT_FORM_SOURCE_PREFIXES = {version: f"{version}:" for version in ("form-v2", "form-v3", "form-v4", "form-v5")}
 
 
 def period_start(period: Period, now: datetime) -> datetime | None:
@@ -41,11 +44,29 @@ def _assign_ranks(rows: list[dict], key) -> list[dict]:
     return rows
 
 
-def workout_board(session: Session, period: Period, exercise: str | None, user: User) -> dict:
+def workout_board(session: Session, period: Period, exercise: str | None, user: User,
+                  rubric: WorkoutRubric | None = None) -> dict:
     """Best analyzed set per person, ordered by score, reps and username."""
     stmt = select(User.username, WorkoutResult.recorded_at, WorkoutResult.exercises).join(
         WorkoutResult, WorkoutResult.user_id == User.id
     )
+    source = WorkoutResult.source
+    prefixes = tuple(WORKOUT_FORM_SOURCE_PREFIXES.values())
+    if rubric is None:
+        updated = aliased(WorkoutResult)
+        base_source = case(*[(source.startswith(prefix), func.substr(source, len(prefix) + 1))
+                             for prefix in prefixes], else_=source)
+        version = case(*[(source.startswith(prefix), index) for index, prefix in enumerate(prefixes, 1)], else_=0)
+        re_scored = select(updated.source).where(
+            updated.user_id == WorkoutResult.user_id,
+            or_(*[and_(version < index, updated.source == prefix + base_source)
+                  for index, prefix in enumerate(prefixes, 1)]),
+        ).exists()
+        stmt = stmt.where(~re_scored)
+    elif rubric == "legacy":
+        stmt = stmt.where(*[~source.startswith(prefix) for prefix in prefixes])
+    else:
+        stmt = stmt.where(source.startswith(WORKOUT_FORM_SOURCE_PREFIXES[rubric]))
     since = period_start(period, utcnow())
     if since is not None:
         stmt = stmt.where(WorkoutResult.recorded_at >= since)
@@ -54,10 +75,11 @@ def workout_board(session: Session, period: Period, exercise: str | None, user: 
         for item in items:
             people = best.setdefault(item["exercise"], {})
             previous = people.get(username)
-            if previous is None or (item["score"], item["reps"], recorded_at) > (
+            score = max(3, item["score"]) if rubric is None else item["score"]
+            if previous is None or (score, item["reps"], recorded_at) > (
                 previous["score"], previous["reps"], previous["recorded_at"]
             ):
-                people[username] = {"username": username, "score": item["score"], "reps": item["reps"],
+                people[username] = {"username": username, "score": score, "reps": item["reps"],
                                     "recorded_at": recorded_at, "is_me": username == user.username}
     exercises = sorted(best)
     selected = exercise if exercise is not None else (exercises[0] if exercises else None)

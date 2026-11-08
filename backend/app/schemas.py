@@ -3,13 +3,14 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .scoring import Exercise
 
 
 GENDERS = ("male", "female", "nonbinary", "other", "prefer_not_to_say")
 Gender = Literal["male", "female", "nonbinary", "other", "prefer_not_to_say"]
+WorkoutRubric = Literal["legacy", "form-v2", "form-v3", "form-v4", "form-v5"]
 
 
 class WorkoutExerciseIn(BaseModel):
@@ -22,6 +23,13 @@ class WorkoutResultIn(BaseModel):
     source: str = Field(max_length=100, pattern=r"^\d{4}-\d{2}-\d{2}/\d{2}-\d{2}\.xlsx#\d+(?:\.\d+)?$")
     recorded_at: datetime
     exercises: list[WorkoutExerciseIn] = Field(max_length=50)
+    rubric: WorkoutRubric = "legacy"
+
+    @model_validator(mode="after")
+    def validate_score_range(self):
+        if self.rubric != "legacy" and any(item.score < 3 for item in self.exercises):
+            raise ValueError("Current form scores must be between 3 and 10.")
+        return self
 
 
 class WorkoutResultsIn(BaseModel):

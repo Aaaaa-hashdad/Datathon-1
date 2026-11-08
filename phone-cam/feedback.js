@@ -10,7 +10,7 @@
 // uses the user's own Claude Code login.
 //
 // Besides the feedback text, Claude returns one line of JSON (exercise, reps, range of
-// motion, tempo, best jump, form score). That is saved per user in
+// motion, tempo, best jump, form criteria). The app calculates the score and saves it per user in
 // <motion-log dir>/<user>/analyses.json, keyed "<session key>#<recording>", and is what
 // Person Statistics counts and graphs.
 
@@ -23,28 +23,40 @@ const TIMEOUT_MS = 150_000;
 const MAX_ROWS = 400;
 const MIN_ROWS = 20;
 const MODEL = process.env.FEEDBACK_MODEL || 'sonnet';
+const SCORE_RUBRIC = 'form-v5';
+const FORM_WEIGHTS = { range: 35, control: 20, stability: 20, tempo: 15, consistency: 10 };
 
 const ANGLES = ['L elbow', 'R elbow', 'L shoulder', 'R shoulder', 'L hip', 'R hip', 'L knee', 'R knee'];
 const COLS = [
   ...ANGLES.map((a) => `${a} angle`), ...ANGLES.map((a) => `${a} raw angle`),
-  'foot_cm', 'feet', 'dist',
+  'tracking', 'lock', 'foot_cm', 'feet', 'dist',
+  ...['L shoulder', 'R shoulder', 'L elbow', 'R elbow'].flatMap((j) => [`${j} x`, `${j} y`, `${j} z`]),
   ...['L hip', 'R hip', 'L wrist', 'R wrist', 'L knee', 'R knee'].flatMap((j) => [`${j} room X`, `${j} room Y`]),
 ];
 const JUMP_COLS = ['n', 'takeoff_s', 'land_s', 'airtime_s', 'height_airtime_cm', 'feet_peak_cm', 'hip_rise_cm', 'agree_cm', 'fps', 'quality'];
 
 const INSTRUCTIONS = `You are the RevGym form coach. Below is raw body-tracking data from ONE recording the user made in front of their phone camera. Nothing in it says what the exercise was: work it out from the movement (it may be no exercise at all).
 
-The recording may contain MORE THAN ONE exercise done back to back (for example curls, then squats, then jumps, without a long pause). Find every exercise that has at least one full rep and report EACH of them; do not drop one because another came first or had more reps. Short fidgets, setting up, holding still or a single shallow knee bounce are not exercises.
+The recording may contain MORE THAN ONE exercise done back to back (for example curls, then squats, then jumps, without a long pause). Find every exercise that has at least one deliberate rep and report EACH of them. Count deliberate partial-range reps so they can be assessed for range. Short fidgets, setting up, holding still or a single shallow knee bounce are not exercises.
 
-Write the feedback the user sees on screen, in plain text, at most 140 words:
-- First, one line per exercise, in the order done: "Exercise: <name> · Reps: <n>" (or a single line "Exercise: none detected").
-- Then 2 to 5 lines starting with "- ", each one concrete observation with numbers from the data, covering every exercise: range of motion (joint angles at top and bottom), tempo (seconds per rep, up vs down), consistency or fatigue across reps, left vs right, and jump heights if there are jumps (trust only jumps with quality "ok").
-- Then: "Tip: <one specific thing to do differently next time>".
-If the data is too short or too patchy to judge, say that in one line and suggest how to set up the camera.
-Do not mention CSV, columns, data, tracking or that you are an AI. Talk to the user directly ("your elbow").
+For form_points, locate the reps and grade each rep on each criterion: 2 = meets the target, 1 = partly meets it or has a small visible deviation, 0 = clearly misses it. Sum the grades separately for each criterion. Each sum is an integer from 0 to twice the number of reps.
+- range: how close both ends of the movement are to the intended positions. For curls, check elbow flexion and return toward extension without requiring a locked elbow. For squats, check depth and return to standing. For push-ups, check elbow bend at the bottom and extension at the top.
+- control: how smoothly the working joints move, including direction changes. Look for visible bouncing, jerking, or an abrupt drop. A smooth, intentionally fast phase can still meet the target.
+- stability: how well supporting body segments hold their intended positions. For curls, check upper-arm drift relative to the shoulder and whether the torso rocks. For squats, check unnecessary sway or shifts in support. For push-ups, check whether the shoulders and hips rise and lower together. Judge left/right balance only when both sides are meant to move together and both are visible.
+- tempo: whether the lifting and return phases are deliberate and suit the movement. Look for a rushed return or an unintended stall. Use phase durations, with no universal time target.
+- consistency: how similar the rep endpoints and phase times are to the rest of that exercise in the set. Consistently short reps may meet this criterion and still miss range.
+Apply equivalent observable targets for other exercises and their variants. Grade the criteria independently using repeated measured frames. Ignore isolated noisy spikes, blank joints, and predicted frames. If there are fewer than two reps or any criterion cannot be judged reliably across the set, return null for form_points. Missing evidence does not earn or lose points.
+Use 0 for a clearly missed target even when the rep was completed. Repeating the same fault can earn consistency points, but it does not earn points for the criterion that was missed. Avoid inflating grades to sound encouraging.
+
+After grading, give direct coaching in plain text, aiming for at most 140 words total. For each exercise, in order, write "Exercise: <name> · Reps: <n>" followed by these short lines:
+- Keep — Name one specific thing to repeat. Say which reps did it well and give a measured angle, phase time, or other concrete observation. Praise the part that worked, even if another part of that rep needs work. If no clear strength is visible, leave this line out.
+- Fix first — Name the most consequential form issue the measurements support, even when the overall set is strong. Say whether it happened once or recurred and give a measurement or a comparison between reps. Prioritize repeated problems over isolated slips of similar severity. If there is no clear issue, say so without inventing one.
+- Next set — Give one cue for the main issue and a concrete check the user can use on the next rep or recording. When no correction is needed, give a target to repeat.
+Keep the wording consistent with the grades. Reserve words like "every rep" and "full range" for evidence that supports them. Describe what changed without guessing at its cause, the load, pain, or injury risk. Use jump heights only from jumps with quality "ok". If the view makes form hard to judge, say what could not be seen and give a specific camera adjustment. If no exercise is detected, say "Exercise: none detected" and skip the coaching lines.
+Talk directly to the user ("your elbow") and leave the numeric form score to the app.
 
 Finally add ONE last line that starts with "JSON: " followed by a single-line JSON object, used for the user's statistics:
-{"exercises": [ one object per exercise found, in order: {"exercise": lowercase common name like "bicep curl", "squat", "push-up", "jumping jacks", "jump", "reps": integer, "start_s": t_s where it starts, "end_s": t_s where it ends, "side": "left"|"right"|"both", "main_joint": the joint that does the work, like "R elbow" or "L knee", "rom_min_deg": that joint's smallest angle in the reps, "rom_max_deg": its largest angle, "sec_per_rep": number, "form_score": integer 1-10} ], "best_jump_cm": number or null (only from jumps with quality "ok")}
+{"exercises": [ one object per exercise found, in order: {"exercise": lowercase common name like "bicep curl", "squat", "push-up", "jumping jacks", "jump", "reps": integer, "start_s": t_s where it starts, "end_s": t_s where it ends, "side": "left"|"right"|"both", "main_joint": the joint that does the work, like "R elbow" or "L knee", "rom_min_deg": that joint's smallest angle in the reps, "rom_max_deg": its largest angle, "sec_per_rep": number, "form_points": {"range": integer, "control": integer, "stability": integer, "tempo": integer, "consistency": integer} or null} ], "best_jump_cm": number or null (only from jumps with quality "ok")}
 Use "exercises": [] when there is no exercise. Use null for anything that does not apply.
 
 How to read the data:`;
@@ -87,13 +99,60 @@ function splitSets(rows) {
 const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
 function normalizeResult(r) {
   if (!r || typeof r !== 'object') return { exercises: [], best_jump_cm: null };
+  const rubric = [SCORE_RUBRIC, 'form-v4', 'form-v3', 'form-v2'].includes(r.rubric) ? r.rubric : null;
   const list = Array.isArray(r.exercises) ? r.exercises : r.exercise ? [r] : [];
   const exercises = list.filter((e) => e && typeof e === 'object').map((e) => ({
     exercise: normalizeExercise(e.exercise), reps: num(e.reps), start_s: num(e.start_s), end_s: num(e.end_s),
     side: typeof e.side === 'string' ? e.side : null, main_joint: typeof e.main_joint === 'string' ? e.main_joint : null,
     rom_min_deg: num(e.rom_min_deg), rom_max_deg: num(e.rom_max_deg), sec_per_rep: num(e.sec_per_rep), form_score: num(e.form_score),
+    ...(rubric && rubric !== 'form-v2' && { form_points: e.form_points ?? null }),
+    form_limit: e.form_limit ?? (e.form_limited === true ? 'fundamentals' : null),
   })).filter((e) => e.exercise);
-  return { exercises, best_jump_cm: num(r.best_jump_cm) };
+  return { exercises, best_jump_cm: num(r.best_jump_cm), rubric };
+}
+
+function gradeForm(reps, points) {
+  if (!Number.isInteger(reps) || reps < 2 || !points) return null;
+  const maxPoints = 2 * reps;
+  let total = 0;
+  for (const [criterion, weight] of Object.entries(FORM_WEIGHTS)) {
+    const grade = points[criterion];
+    if (!Number.isInteger(grade) || grade < 0 || grade > maxPoints) return null;
+    total += grade * weight;
+  }
+  if (total === maxPoints * 100) return { score: 10, limit: null };
+  const weighted = 3 + 7 * total / (maxPoints * 100);
+  const [weakest, nextWeakest] = [points.range, points.control, points.stability].sort((a, b) => a - b);
+  // One consistently missed fundamental caps the score at 6. Two cap it at 3.
+  // Raise each cap gradually as the reps earn partial credit for those criteria.
+  const fundamentalsCap = Math.min(6 + 7 * weakest / maxPoints, 3 + 7 * (weakest + nextWeakest) / maxPoints);
+  // An 8 should require roughly 80% credit in at least three of the five criteria.
+  const grades = Object.keys(FORM_WEIGHTS).map((criterion) => points[criterion]).sort((a, b) => a - b);
+  const balanceCap = 3 + 7 * (grades[2] / maxPoints) ** 1.5;
+  const cap = Math.min(fundamentalsCap, balanceCap);
+  const score = Math.min(9.9, Math.round(Math.min(weighted, cap) * 10) / 10);
+  if (score === Math.min(9.9, Math.round(weighted * 10) / 10)) return { score, limit: null };
+  return { score, limit: fundamentalsCap <= balanceCap ? 'fundamentals' : 'balance' };
+}
+
+// Keep a malformed reply from replacing a saved analysis during re-scoring.
+function parseAnswer(answer) {
+  const lines = answer.split(/\r?\n/);
+  const i = lines.findLastIndex((line) => /^JSON:/i.test(line.trim()));
+  try {
+    const raw = JSON.parse(lines[i].trim().replace(/^JSON:\s*/i, '').replace(/^`+|`+$/g, ''));
+    if (!Array.isArray(raw?.exercises)) throw new Error();
+    const exercises = raw.exercises.map((item) => {
+      if (!normalizeExercise(item?.exercise) || !Number.isInteger(item.reps) || item.reps < 1) throw new Error();
+      const grade = gradeForm(item.reps, item.form_points);
+      if (item.form_points !== null && grade === null) throw new Error();
+      return { ...item, form_score: grade?.score ?? null, form_limit: grade?.limit ?? null };
+    });
+    lines.splice(i, 1);
+    return { text: lines.join('\n').trim(), result: normalizeResult({ ...raw, exercises, rubric: SCORE_RUBRIC }) };
+  } catch {
+    throw new Error('The form analysis came back incomplete. Please try again.');
+  }
 }
 
 function createFeedback({ motionLog }) {
@@ -122,8 +181,8 @@ function createFeedback({ motionLog }) {
       && Number.isInteger(item.reps) && item.reps >= 1 && item.reps <= 1000
       && item.form_score >= 1 && item.form_score <= 10)
       .slice(0, 50).map((item) => ({ exercise: item.exercise, reps: item.reps, score: item.form_score }));
-    if (result.exercises.length && !exercises.length) return null;
-    return { source, recorded_at: date.toISOString(), exercises };
+    if (!result.rubric && result.exercises.length && !exercises.length) return null;
+    return { source, recorded_at: date.toISOString(), exercises, ...(result.rubric && { rubric: result.rubric }) };
   }
 
   function savedBoardResults(owner) {
@@ -146,7 +205,7 @@ function createFeedback({ motionLog }) {
     if (step > 1) rows = rows.filter((_, i) => i % step === 0);
     const used = COLS.filter((c) => rows.some((r) => r[c] != null && r[c] !== ''));
     const fmt = (v) => (v == null ? '' : typeof v === 'number' ? String(Math.round(v * 10) / 10) : String(v).replace(/,/g, ';'));
-    const csv = [['t_s', ...used].join(','), ...rows.map((r) => [fmt(r.elapsed_s - t0), ...used.map((c) => fmt(r[c]))].join(','))];
+    const csv = [['t_s', ...used].join(','), ...rows.map((r) => [(r.elapsed_s - t0).toFixed(3), ...used.map((c) => fmt(r[c]))].join(','))];
     const t1 = found.rows[found.rows.length - 1].elapsed_s;
     const jumps = (s.jumps || []).filter((j) => (Number(j.recording) || 1) === rec && j.takeoff_s >= t0 - 1 && j.land_s <= t1 + 1)
       .map((j) => ({ ...j, takeoff_s: j.takeoff_s - t0, land_s: j.land_s - t0 }));
@@ -205,21 +264,6 @@ function createFeedback({ motionLog }) {
     });
   }
 
-  // Split Claude's answer into the on-screen text and the JSON statistics line.
-  function parseAnswer(answer) {
-    const lines = answer.split(/\r?\n/);
-    const i = lines.map((l) => l.trim()).findLastIndex((l) => /^JSON:/i.test(l));
-    let result = null;
-    if (i >= 0) {
-      try {
-        const raw = lines[i].trim().replace(/^JSON:\s*/i, '').replace(/^`+|`+$/g, '');
-        result = JSON.parse(raw);
-        lines.splice(i, 1);
-      } catch { result = null; }
-    }
-    return { text: lines.join('\n').trim(), result: result && normalizeResult(result) };
-  }
-
   // Analyse one set and save the result. Returns { text, result, set }.
   async function analyze(set, publish) {
     if (busy) { const e = new Error('Already working on a set. Try again in a moment.'); e.code = 429; throw e; }
@@ -229,9 +273,9 @@ function createFeedback({ motionLog }) {
       const { text, result } = parseAnswer(await runClaude(`${INSTRUCTIONS}\n${set.text}`));
       const info = { key: set.key, recording: set.recording, seconds: set.seconds, frames: set.frames, recordedAt: set.recordedAt };
       const id = `${set.key}#${set.recording}`;
-      try { saveAnalysis(id, { ...(result || {}), text, set: info, analyzedAt: new Date().toISOString(), model: MODEL }); }
+      try { saveAnalysis(id, { ...result, text, set: info, analyzedAt: new Date().toISOString(), model: MODEL }); }
       catch (e) { console.error('[feedback] could not save analysis', e.message); }
-      const summary = result && boardResult(info, result);
+      const summary = boardResult(info, result);
       let published = null;
       if (summary && publish) {
         try { await publish([summary]); published = true; }
@@ -257,4 +301,4 @@ function createFeedback({ motionLog }) {
   return { route, analyze, buildSet, lastSet, loadAnalyses, savedBoardResults, normalizeExercise };
 }
 
-module.exports = { createFeedback, splitSets, normalizeResult };
+module.exports = { createFeedback, splitSets, normalizeResult, parseAnswer, SCORE_RUBRIC };

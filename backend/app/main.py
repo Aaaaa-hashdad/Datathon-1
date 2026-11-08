@@ -33,7 +33,7 @@ from .auth import bearer, check_login, end_session, hash_password, make_auth_dep
 from .config import BACKEND_DIR, Settings
 from .db import Base, add_missing_columns, make_engine, make_session_factory, secure_supabase_tables
 from .devices import lan_address, make_device_dependency, new_pair_code, qr_svg_data_uri, redeem_pair_code
-from .leaderboard import build_leaderboard, workout_board
+from .leaderboard import WORKOUT_FORM_SOURCE_PREFIXES, build_leaderboard, workout_board
 from .live import LiveHub
 from .models import Device, GuestCounter, Rep, ScanSet, User, WorkoutResult, utcnow
 from .schemas import (
@@ -53,6 +53,7 @@ from .schemas import (
     ScanOut,
     UserOut,
     WorkoutResultsIn,
+    WorkoutRubric,
 )
 from .scoring import QUALIFYING_FORM_SCORE, Exercise, qualifies, set_form_score, set_points
 
@@ -349,8 +350,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             recorded_at = result.recorded_at
             if recorded_at.tzinfo is not None:
                 recorded_at = recorded_at.astimezone(timezone.utc).replace(tzinfo=None)
-            values[result.source] = dict(user_id=user.id, source=result.source, recorded_at=recorded_at,
-                                         exercises=[item.model_dump() for item in result.exercises])
+            source = WORKOUT_FORM_SOURCE_PREFIXES.get(result.rubric, "") + result.source
+            values[source] = dict(user_id=user.id, source=source, recorded_at=recorded_at,
+                                  exercises=[item.model_dump() for item in result.exercises])
         insert = pg_insert if engine.dialect.name == "postgresql" else sqlite_insert
         stmt = insert(WorkoutResult).values(list(values.values()))
         db.execute(stmt.on_conflict_do_update(index_elements=[WorkoutResult.user_id, WorkoutResult.source],
@@ -360,11 +362,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/ui/workout-leaderboard")
     def api_workout_leaderboard(response: Response, period: Literal["week", "all_time"] = "week",
                                 exercise: str | None = Query(None, max_length=60),
+                                rubric: WorkoutRubric | None = None,
                                 user: User | None = Depends(cookie_user), db: Session = Depends(get_db)):
         if user is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not logged in")
         response.headers["Cache-Control"] = "no-store"
-        return workout_board(db, period, exercise, user)
+        return workout_board(db, period, exercise, user, rubric)
 
     # ---------- scans (analysed sets) ----------
 

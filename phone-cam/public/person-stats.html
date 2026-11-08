@@ -291,7 +291,7 @@ function drawTable() {
   host.innerHTML = `<table><thead><tr><th>Exercise</th><th class="n">Sets</th><th class="n">Reps</th><th class="n">Best range</th><th class="n">Tempo</th><th class="n">Form score</th><th>Last done</th></tr></thead><tbody>
     ${D.exercises.map((e) => `<tr><td><span class="swatch" style="background:${colorOf[e.name]}"></span>${esc(cap(e.name))}</td><td class="n">${e.sets}</td><td class="n">${e.reps}</td>
       <td class="n">${e.bestRangeDeg != null ? `${e.bestRangeDeg}°` : '–'}</td><td class="n">${e.avgSecPerRep != null ? `${e.avgSecPerRep} s/rep` : '–'}</td>
-      <td class="n">${e.avgScore != null ? `${e.avgScore}/10` : '–'}</td><td>${e.last ? fmtDay(e.last) : '–'}</td></tr>`).join('')}</tbody></table>`;
+      <td class="n">${e.avgScore != null ? `${e.avgScore}/10${e.earlierScore ? ' (earlier)' : ''}` : '–'}</td><td>${e.last ? fmtDay(e.last) : '–'}</td></tr>`).join('')}</tbody></table>`;
 }
 
 // Claude's feedback text → paragraphs and a list (same shape as Form Check).
@@ -309,23 +309,34 @@ function drawSets() {
   const host = $('#setList');
   const list = D.sets.slice(0, 40);
   if (!list.length) { host.innerHTML = '<p class="empty">Your sets will be listed here.</p>'; return; }
+  const criteria = { range: 'Range of motion', control: 'Movement control', stability: 'Body stability', tempo: 'Tempo', consistency: 'Rep consistency' };
+  const scoreLimits = {
+    fundamentals: 'Repeated issues with range, control, or stability limited this form score.',
+    balance: 'A high form score requires strong performance across several criteria.',
+  };
   host.innerHTML = list.map((s) => {
     const a = s.analysis, items = a?.items || [];
+    const scoreLabel = (it) => it.score != null ? `form ${it.score}/10${a.currentScore ? '' : ' (earlier)'}` : 'Unscored';
+    const breakdown = items.filter((it) => it.formPoints && it.reps > 0).map((it) => `<p><b>${esc(cap(it.exercise))}</b></p><ul>${
+      Object.entries(criteria).map(([key, label]) => `<li>${label} · ${Math.round(100 * it.formPoints[key] / (2 * it.reps))}%</li>`).join('')
+    }</ul>${scoreLimits[it.scoreLimit] ? `<p>${esc(scoreLimits[it.scoreLimit])}</p>` : ''}`).join('');
     // every exercise in the set (curls then squats … each listed)
     const what = items.length
-      ? items.map((it) => `<span><span class="swatch" style="background:${colorOf[it.exercise]}"></span><b>${esc(cap(it.exercise))}</b>${it.reps != null ? ` · ${it.reps} reps` : ''}${it.score ? ` <span class="badge">form ${it.score}/10</span>` : ''}</span>`).join('<span class="when">then</span>')
+      ? items.map((it) => `<span><span class="swatch" style="background:${colorOf[it.exercise]}"></span><b>${esc(cap(it.exercise))}</b>${it.reps != null ? ` · ${it.reps} reps` : ''} <span class="badge">${scoreLabel(it)}</span></span>`).join('<span class="when">then</span>')
       : a ? '<b>No exercise detected</b>' : '<b>Not analysed yet</b>';
     const extra = s.jumps ? `<span class="badge">${s.jumps} jump${s.jumps === 1 ? '' : 's'}</span>` : '';
     return `<div class="set" data-id="${esc(s.id)}">
       <div class="set-top">${what}
         <span class="when">${fmtAt(s.at)} · ${s.seconds} s</span>${extra}<span class="sp"></span>
-        ${a ? '' : `<button class="btn primary" type="button" data-analyze="${esc(s.id)}">Analyze</button>`}</div>
+        ${a?.currentScore ? '' : `<button class="btn primary" type="button" data-analyze="${esc(s.id)}">${a ? 'Re-score' : 'Analyze'}</button>`}</div>
+      ${breakdown ? `<details><summary>Score breakdown</summary>${breakdown}</details>` : ''}
       ${a?.text ? `<details><summary>Claude's feedback</summary>${feedbackHtml(a.text)}</details>` : ''}
       <div class="err" hidden></div></div>`;
   }).join('') + (D.sets.length > list.length ? `<p class="sub">Showing your latest ${list.length} of ${D.sets.length} sets.</p>` : '');
   host.onclick = async (e) => {
     const b = e.target.closest('[data-analyze]'); if (!b) return;
     const card = b.closest('.set'), err = $('.err', card);
+    const label = b.textContent;
     host.querySelectorAll('[data-analyze]').forEach((x) => { x.disabled = true; });
     b.textContent = 'Claude is reading this set…'; err.hidden = true;
     try {
@@ -333,7 +344,7 @@ function drawSets() {
       if (!r.ok) throw new Error(r.error || 'Could not analyse this set.');
       await load();
     } catch (x) {
-      err.textContent = x.message; err.hidden = false; b.textContent = 'Analyze';
+      err.textContent = x.message; err.hidden = false; b.textContent = label;
       host.querySelectorAll('[data-analyze]').forEach((y) => { y.disabled = false; });
       postHeight();
     }
