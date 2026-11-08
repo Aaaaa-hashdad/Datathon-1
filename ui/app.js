@@ -93,11 +93,10 @@
     async saveNotificationSettings(patch) { Object.assign(db.settings, patch); persist(); return copy(db.settings); },
 
     async getHistory() {
-      const recorded = db.results.map((r) => ({ id: r.id, date: r.date, exercise: r.exerciseId, score: r.score, reps: r.reps.length, weight: null, unit: '', resultId: r.id }));
+      const recorded = db.results.map((r) => ({ id: r.id, date: r.date, exercise: r.exerciseId, score: r.score, reps: r.reps.length, resultId: r.id }));
       const seeded = M.history.map((h) => ({ ...h, date: addDays(new Date(), -h.daysAgo).toISOString() }));
       return copy([...recorded.reverse(), ...seeded]);
     },
-    async getPersonalBests() { return M.personalBests.map((p) => ({ ...p, date: addDays(new Date(), -p.daysAgo).toISOString() })); },
     async getFormTrend(key) { return copy(M.formTrend[key] || M.formTrend.all); },
     async getTrainedDays() { return copy(M.trainedDaysAgo); },
 
@@ -1055,7 +1054,7 @@
     let el, trendKey = 'all';
     async function render(root) {
       el = root;
-      const [u, pbs, hist, trained] = await Promise.all([Api.getCurrentUser(), Api.getPersonalBests(), Api.getHistory(), Api.getTrainedDays()]);
+      const [u, hist, trained] = await Promise.all([Api.getCurrentUser(), Api.getHistory(), Api.getTrainedDays()]);
       const joined = new Date(u.joined + 'T12:00:00');
       // Heatmap: last 5 full weeks ending this Sunday.
       const ws = weekStart(new Date()); const first = addDays(ws, -28); const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -1063,7 +1062,7 @@
 
       el.innerHTML = `
         <section class="p-hero gutter">
-          <div class="who"><span class="avatar">${esc(u.initials)}</span><div><h2>${esc(u.name)}</h2><span>Class of ${esc(u.classYear)} · ${esc(u.major)}<br>Member since ${MON[joined.getMonth()]} ${joined.getFullYear()} · Home gym: ${esc(locById(u.homeGym).name)}</span></div></div>
+          <div class="who"><span class="avatar">${esc(u.initials)}</span><div><h2>${esc(u.name)}</h2><span>Class of ${esc(u.classYear)} · ${esc(u.major)}<br>Member since ${MON[joined.getMonth()]} ${joined.getFullYear()}</span></div></div>
           <div class="p-stats num">
             <div><b>${u.streakDays}</b><span>Day streak</span></div>
             <div><b>${u.longestStreak}</b><span>Longest</span></div>
@@ -1087,13 +1086,8 @@
           </div><div class="prof-col">
 
           <section class="card">
-            <div class="section-h" style="margin-bottom:4px"><h2>Personal bests</h2><span class="small muted">weight · form</span></div>
-            ${pbs.map((p) => `<div class="pb-row"><div><b>${esc(exById(p.exercise).name)}</b><span>${p.reps} rep${p.reps > 1 ? 's' : ''} · ${relDay(p.date)}</span></div><span class="w num">${p.weight}<small class="small muted" style="font-family:var(--font-body);font-weight:500"> ${esc(p.unit)}</small></span><span class="score-badge ${band(p.bestForm)} num">${p.bestForm}</span></div>`).join('')}
-          </section>
-
-          <section class="card">
             <div class="section-h" style="margin-bottom:4px"><h2>Recent form checks</h2><button class="link" id="newRec">+ Record</button></div>
-            ${hist.map((h) => `<button class="h-row" data-hist="${h.id}" data-result="${h.resultId || ''}"><div><b>${esc(exById(h.exercise).name)}</b><span>${relDay(h.date)} · ${h.reps} reps${h.weight ? ` · ${h.weight} ${esc(h.unit)}` : h.unit === 'BW' ? ' · bodyweight' : ''}</span></div><span class="small muted">Report ›</span><span class="score-badge ${band(h.score)} num">${h.score}</span></button>`).join('')}
+            ${hist.map((h) => `<button class="h-row" data-hist="${h.id}" data-result="${h.resultId || ''}"><div><b>${esc(exById(h.exercise).name)}</b><span>${relDay(h.date)} · ${h.reps} reps</span></div><span class="small muted">Report ›</span><span class="score-badge ${band(h.score)} num">${h.score}</span></button>`).join('')}
           </section>
           </div></div>
           <p class="sample-note">Sample profile · RevGym prototype</p>
